@@ -216,6 +216,49 @@ class PortalTests(unittest.TestCase):
         self.assertIsNone(con["cursor"])
         self.assertEqual(con["state"], "backoff")
 
+    def test_new_device_is_discovered_from_its_first_packet(self):
+        self.prepare_hubble()
+        packet = self.packet()
+        packet["device"]["id"] = "two"
+
+        def api(con, path, cursor=None, query=None):
+            if path.endswith("/devices"):
+                return {"devices": [{"id": "one", "name": "Tag"}, {"id": "two", "name": "New tag"}]}, None, 0
+            return {"packets": [packet]}, None, 0
+
+        with patch.object(self.portal, "hubble_request", side_effect=api):
+            self.portal.hubble(lambda *a: None)
+        new = [d for d in self.portal.devices() if d["name"] == "New tag"]
+        self.assertEqual(len(new), 1)
+        self.assertEqual(len(self.portal.packets(new[0]["id"])["packets"]), 1)
+
+    def test_stale_or_malformed_packets_do_not_block_the_stream(self):
+        self.prepare_hubble()
+        removed = {"device": {"id": "removed", "timestamp": 1700000000, "payload": "AA=="}}
+        no_time = {"device": {"id": "one", "payload": "AA=="}}
+        bad_location = self.packet()
+        bad_location["device"]["timestamp"] = 1700000002
+        bad_location["location"]["latitude"] = "north"
+
+        def api(con, path, cursor=None, query=None):
+            if path.endswith("/devices"):
+                return {"devices": [{"id": "one", "name": "Tag"}]}, None, 0
+            if cursor:
+                return {"packets": []}, "next", 0
+            return {"packets": [removed, no_time, bad_location, self.packet()]}, "next", 0
+
+        with self.assertLogs(level="WARNING") as logs, patch.object(
+            self.portal, "hubble_request", side_effect=api
+        ):
+            self.portal.hubble(lambda *a: None)
+        self.assertEqual(len(logs.records), 3)
+        with self.portal.db() as c:
+            con = dict(c.execute("SELECT * FROM connections").fetchone())
+        self.assertEqual((con["cursor"], con["state"]), ("next", "ok"))
+        tag = self.portal.devices()[1]["id"]
+        self.assertEqual(len(self.portal.packets(tag)["packets"]), 2)
+        self.assertEqual(self.portal.history(tag)["report_count"], 1)
+
     def test_auth_failure_is_separate_from_apple(self):
         self.prepare_hubble()
         with patch.object(self.portal, "hubble_request", side_effect=ProviderError("HubbleHTTP401", 401)):

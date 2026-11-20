@@ -484,11 +484,11 @@ class Portal:
                 return
         raise ValueError("Device discovery exceeded page limit")
 
-    def ingest_packets(self, con, packets):
+    def ingest_packets(self, con, packets, skip_unknown=False):
         with self.lock:
-            return self.store_hubble_packets(con, packets)
+            return self.store_hubble_packets(con, packets, skip_unknown)
 
-    def store_hubble_packets(self, con, packets):
+    def store_hubble_packets(self, con, packets, skip_unknown=False):
         with self.db() as c:
             devices = c.execute(
                 """SELECT * FROM devices WHERE provider='hubble'
@@ -502,11 +502,20 @@ class Portal:
             remote = device.get("id") or device.get("device_id")
             d = mapping.get(remote)
             if not d:
-                raise ValueError("Undiscovered Hubble device; retry after discovery")
+                if skip_unknown:
+                    # Still not listed after a fresh discovery (e.g. removed from the organization):
+                    # skip it, so one stale packet can't hold up every other device's stream.
+                    logging.warning("Skipped a Hubble packet from a device the organization doesn't list.")
+                    continue
+                raise UndiscoveredDevice("Undiscovered Hubble device; retry after discovery")
             if d["deleted"]:
                 continue
             # Paused devices are still archived from the organization stream so the global cursor cannot lose their data.
-            ts = timestamp(device.get("timestamp") or (packet.get("location") or {}).get("timestamp"))
+            try:
+                ts = timestamp(device.get("timestamp") or (packet.get("location") or {}).get("timestamp"))
+            except (AttributeError, TypeError, ValueError, OverflowError, OSError):
+                logging.warning("Skipped a Hubble packet without a usable timestamp.")
+                continue
             encoded = json.dumps(packet, sort_keys=True, separators=(",", ":"))
             fingerprint = hashlib.sha256(encoded.encode()).hexdigest()
             with self.db() as c:
@@ -521,17 +530,21 @@ class Portal:
                 and loc.get("longitude") is not None
             ):
                 # Terrestrial coordinates are the relay gateway's GPS fix, not on-board GPS.
-                self.save_reports(
-                    d,
-                    [
-                        {
-                            "timestamp": ts,
-                            "latitude": loc["latitude"],
-                            "longitude": loc["longitude"],
-                            "accuracy_m": loc["horizontal_accuracy"],
-                        }
-                    ],
-                )
+                try:
+                    self.save_reports(
+                        d,
+                        [
+                            {
+                                "timestamp": ts,
+                                "latitude": loc["latitude"],
+                                "longitude": loc["longitude"],
+                                "accuracy_m": loc["horizontal_accuracy"],
+                            }
+                        ],
+                    )
+                except (TypeError, ValueError):
+                    # The packet itself is archived above; only an unreadable location is left out.
+                    logging.warning("Skipped an unreadable Hubble relay location.")
         return added
 
     def hubble(self, push):
@@ -563,10 +576,16 @@ class Portal:
                     packets = body.get("packets", [])
                     try:
                         added = self.ingest_packets(con, packets)
-                    except ValueError:
+                    except UndiscoveredDevice:
+                        # Most likely registered since the last discovery: look again now, then skip
+                        # packets from any device the organization still doesn't list.
+                        self.discover(con)
                         with self.db() as c:
-                            c.execute("UPDATE connections SET next_discovery=0 WHERE id=?", (con["id"],))
-                        raise
+                            c.execute(
+                                "UPDATE connections SET next_discovery=? WHERE id=?",
+                                (time.time() + 300, con["id"]),
+                            )
+                        added = self.ingest_packets(con, packets, skip_unknown=True)
                     # Advance only after durable idempotent writes to every device database.
                     with self.db() as c:
                         c.execute("UPDATE connections SET cursor=? WHERE id=?", (next_cursor, con["id"]))
@@ -623,6 +642,10 @@ class Portal:
             except Exception as error:
                 logging.warning("Hubble collection loop failed (%s).", type(error).__name__)
             stop.wait(2)
+
+
+class UndiscoveredDevice(ValueError):
+    """A Hubble packet names a device the last discovery didn't list."""
 
 
 class ProviderError(Exception):
