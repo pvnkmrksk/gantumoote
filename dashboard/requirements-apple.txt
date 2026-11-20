@@ -1,0 +1,11 @@
+-r requirements.txt
+# Runtime for the pinned FindMy.py source and CoreADI helper fetched by setup_apple.
+anisette==1.2.4
+unicorn==2.1.4
+aiohttp==3.14.5
+protobuf==7.36.2
+srp==1.0.22
+beautifulsoup4==4.15.0
+bleak==3.0.2
+typing_extensions==4.16.0
+certifi==2026.10.23

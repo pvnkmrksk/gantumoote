@@ -1,0 +1,23 @@
+const assert=require('node:assert/strict');
+const T=require('./assets/trajectory.js');
+function point(latitude,longitude,time){return {latitude,longitude,time,timestamp:new Date(time).toISOString(),accuracy_m:20}}
+const jitter=[0,0,30,0,0].map((x,i)=>point(x,x*2,i*60000));
+const original=JSON.stringify(jitter);
+assert.equal(T.smooth(jitter,5)[2].latitude,0);
+assert.equal(T.smooth(jitter,5)[2].longitude,0);
+assert.equal(JSON.stringify(jitter),original,'Raw observations must not mutate');
+const steady=Array.from({length:7},(_,i)=>point(i,i*2,i*60000));
+assert.deepEqual(T.smooth(steady,5),steady,'Median must preserve a steady monotonic path');
+const split=[point(0,0,0),point(1,1,60000),point(100,100,3600000),point(101,101,3660000)];
+const features=T.routeFeatures(split,{smooth:true,median:5,gap:5,palette:'inferno'});
+assert.equal(features.length,2,'Route must not bridge a long gap');
+assert.deepEqual(features[0].geometry.coordinates,[[0,0],[1,1]],'Windows must not mix separate segments');
+assert.deepEqual(features[1].geometry.coordinates,[[100,100],[101,101]]);
+assert.equal(T.color(0,'inferno'),'#000004');
+assert.equal(T.color(1,'inferno'),'#fcffa4');
+assert.equal(T.color(1,'magma'),'#fcfdbf');
+assert.equal(T.progress(1,0,100),.01,'Colors use elapsed time, not report index');
+assert.equal(T.progress(10,10,10),1,'Equal-age observations are all latest');
+assert.equal(features.at(-1).properties.color,T.color(1,'inferno'));
+assert.deepEqual(T.routeFeatures([],{smooth:true}),[]);
+console.log('Median jitter reduction, raw-data preservation, gap handling, and chronological palettes: passed.');
