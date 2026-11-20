@@ -49,6 +49,12 @@ Then open the same local address in your laptop browser. Use SSH to read the acc
 Pi. The dashboard listens on loopback. Keep the access code private, since it grants access to
 every device, export and management action in this installation.
 
+Each browser signs in once and remembers it. **Share view** copies a link to the current map view
+without the access code, so whoever opens it has to sign in. Links from versions before 20 Nov 2026
+carried the code in the address (`#access=`). If one of those was ever shared, change the code:
+stop the dashboard, delete `dashboard/data/secrets/access-code.txt` and start it again. It makes a
+new code, and every browser has to sign in again with it.
+
 ## 2. Add devices
 
 ### Apple Find My
