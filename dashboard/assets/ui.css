@@ -24,3 +24,4 @@ dialog{color:var(--text,#eee4f0);background:var(--panel,#201923);border:1px soli
 #hubbleKeyForm {
     margin: 14px 0;
 }
+.privacy-note a{color:#ffb36a}
