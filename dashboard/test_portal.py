@@ -105,6 +105,35 @@ class PortalTests(unittest.TestCase):
         self.assertEqual(len(self.portal.devices()), 3)
         self.assertNotIn("synthetic-token", json.dumps(self.portal.inventory()))
 
+    def test_hubble_temperature_unit_is_per_device_and_survives_discovery(self):
+        con = self.prepare_hubble()
+        packet = self.packet()
+        # VCC 0x6d, temperature 42 counts, advert count 5
+        packet["device"]["payload"] = base64.b64encode(bytes.fromhex("6d2a0005000000")).decode()
+        self.portal.ingest_packets(con, [packet])
+        hub = self.portal.devices()[1]["id"]
+        self.assertEqual(self.portal.packets(hub)["packets"][0]["sensors"]["temp_c"], 0.42)  # 0.01 degC default
+        history = self.portal.history(hub)
+        self.assertEqual((history["temp_unit"], history["reports"][0]["temp_c"]), (0.01, 0.42))
+
+        self.portal.set_temp_unit({"id": hub, "temp_unit": 0.5})
+        self.assertEqual(self.portal.packets(hub)["packets"][0]["sensors"]["temp_c"], 21.0)
+        self.assertEqual(self.portal.history(hub)["reports"][0]["temp_c"], 21.0)  # the sighting gets its packet's reading
+        with patch.object(
+            self.portal, "hubble_request", return_value=({"devices": [{"id": "one", "name": "Renamed"}]}, None, 0)
+        ):
+            self.portal.discover(con)
+        self.assertEqual(self.portal.history(hub)["temp_unit"], 0.5)  # a sync keeps the setting
+        self.assertEqual(self.portal.device(hub)["name"], "Renamed")
+        self.assertEqual(next(d for d in self.portal.inventory()["devices"] if d["id"] == hub)["temp_unit"], 0.5)
+
+        for unit in [0.1, "0.5", True, None]:
+            with self.assertRaisesRegex(ValueError, "0.01 or 0.5"):
+                self.portal.set_temp_unit({"id": hub, "temp_unit": unit})
+        with self.assertRaisesRegex(ValueError, "Only Hubble"):
+            self.portal.set_temp_unit({"id": self.primary, "temp_unit": 0.5})
+        self.assertIsNone(self.portal.history(self.primary)["temp_unit"])
+
     def test_status_byte_is_kept_and_read_as_temperature_only_when_set(self):
         d = self.portal.device(self.primary)
         base = {"latitude": 1, "longitude": 2, "accuracy_m": 3}

@@ -56,15 +56,16 @@
     }
 
     function renderDevice(device) {
-        const {id, name, provider, active, state, report_count, packet_count, key_saved, status_format} = device;
+        const {id, name, provider, active, state, report_count, packet_count, key_saved, status_format, temp_unit} = device;
         const row = document.createElement('div');
         row.className = 'inventory-row';
         const apple = provider === 'openhaystack';
         const providerName = apple ? 'OpenHaystack' : 'Hubble';
         const tempTag = status_format === 'temp_half_c';
+        const halfDegree = temp_unit === 0.5;
         const packetInfo = apple
             ? (tempTag ? ' · Sends temperature' : '')
-            : ` · ${packet_count} packets${key_saved ? ' · Key saved' : ''}`;
+            : ` · ${packet_count} packets${key_saved ? ' · Key saved' : ''} · Temperature in ${halfDegree ? '0.5' : '0.01'} °C steps`;
         const detail = `${providerName} · ${state.replaceAll('_', ' ')} · ${report_count} locations${packetInfo}`;
         row.append(node('strong', name), node('small', detail), action('View', () => switchDevice(id)));
 
@@ -102,6 +103,16 @@
             }));
         } else {
             row.append(action(key_saved ? 'Replace key' : 'Save key', () => showKeyForm(device)));
+            // Tags that also send temperature over Find My use 0.5 °C steps for both networks (the unit is global on the chip).
+            row.append(action(halfDegree ? 'Use 0.01 °C steps' : 'Use 0.5 °C steps', async () => {
+                try {
+                    await request('/api/devices/temp-unit', {id, temp_unit: halfDegree ? 0.01 : 0.5});
+                    $('inventoryMessage').textContent = `${name}: temperature now read in ${halfDegree ? '0.01' : '0.5'} °C steps.`;
+                    await load();
+                } catch (error) {
+                    $('inventoryMessage').textContent = error.message;
+                }
+            }));
         }
 
         row.append(action('Delete', async event => {

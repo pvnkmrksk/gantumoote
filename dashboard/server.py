@@ -262,6 +262,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/devices/update": portal.toggle,
             "/api/devices/rename": portal.rename,
             "/api/devices/status-format": portal.set_status_format,
+            "/api/devices/temp-unit": portal.set_temp_unit,
             "/api/devices/delete": portal.delete,
             "/api/devices/hubble-key": portal.save_hubble_key,
             "/api/connections/hubble": portal.connect,

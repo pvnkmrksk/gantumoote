@@ -25,14 +25,17 @@ from .settings import PROJECT, REGISTRY, write_private
 
 # The gantu sensor payload, as in gantu-tag's tools/hubble_decode.py and configs/hubble-template.cfg.
 VCC_UNIT, TEMP_UNIT = 0.03125, 0.01  # V and degC per count
+# The chip's temperature unit is global, so a tag that also sends temperature in its Find My status byte
+# (0.5 degC steps) sends Hubble's 2-byte temperature in 0.5 degC too. Set per Hubble device.
+HUBBLE_TEMP_UNITS = (0.01, 0.5)
 
 
-def parse_sensors(payload: bytes) -> dict:
+def parse_sensors(payload: bytes, temp_unit: float = TEMP_UNIT) -> dict:
     """7-byte gantu sensor payload: VCC (1), temperature (2, signed), advertising count (4); little-endian."""
     if len(payload) != 7:
         raise ValueError(f"expected 7 bytes, got {len(payload)}")
     return {"vcc_v": round(payload[0] * VCC_UNIT, 3),
-            "temp_c": round(int.from_bytes(payload[1:3], "little", signed=True) * TEMP_UNIT, 2),
+            "temp_c": round(int.from_bytes(payload[1:3], "little", signed=True) * temp_unit, 2),
             "adv_count": int.from_bytes(payload[3:7], "little")}
 
 
@@ -94,16 +97,21 @@ def valid_key(encoded):
         raise ValueError("Use a valid 28-byte OpenHaystack private key in standard base64") from None
 
 
-def hubble_sensors(packet):
+def hubble_sensors(packet, temp_unit=TEMP_UNIT):
     """Read the decrypted seven-byte Gantu payload returned by Hubble."""
     device = packet.get("device")
     encoded = device.get("payload") if isinstance(device, dict) else None
     if not isinstance(encoded, str) or len(encoded) != 12:
         return None
     try:
-        return parse_sensors(base64.b64decode(encoded, validate=True))
+        return parse_sensors(base64.b64decode(encoded, validate=True), temp_unit)
     except ValueError:
         return None
+
+
+def hubble_temp_unit(cfg):
+    unit = cfg.get("temp_unit")
+    return unit if unit in HUBBLE_TEMP_UNITS else TEMP_UNIT
 
 
 class Portal:
@@ -198,11 +206,24 @@ class Portal:
                 checked = row[0] if row else d["checked_at"]
         else:
             checked = d["checked_at"]
+        unit = hubble_temp_unit(cfg) if d["provider"] == "hubble" else None
+        if unit and reports:
+            # A Hubble sighting is the relay's fix for one packet: give it that packet's temperature.
+            temps = {}
+            with self.db() as c:
+                for row in c.execute("SELECT observed_at,payload FROM packets WHERE device_id=?", (d["id"],)):
+                    sensors = hubble_sensors(json.loads(row["payload"]), unit)
+                    if sensors:
+                        temps[row["observed_at"]] = sensors["temp_c"]
+            for report in reports:
+                if report["timestamp"] in temps:
+                    report["temp_c"] = temps[report["timestamp"]]
         return {
             "device_id": d["id"],
             "tag": d["name"],
             "provider": d["provider"],
             "status_format": fmt,
+            "temp_unit": unit,
             "reports": reports,
             "report_count": len(reports),
             "checked_at": checked,
@@ -231,6 +252,7 @@ class Portal:
                     "latest_observation": h["latest_observation"],
                     "key_saved": d["provider"] == "hubble" and self.hubble_key_path(d["id"]).is_file(),
                     "status_format": h["status_format"],
+                    "temp_unit": h["temp_unit"],
                 }
             )
         with self.db() as c:
@@ -320,6 +342,21 @@ class Portal:
                 c.execute("UPDATE devices SET config=? WHERE id=?", (json.dumps(cfg), d["id"]))
         return {"ok": True}
 
+    def set_temp_unit(self, data):
+        """Say in what unit a Hubble tag sends its 2-byte temperature: 0.01 degC (default) or 0.5 degC."""
+        unit = data.get("temp_unit")
+        if unit not in HUBBLE_TEMP_UNITS or isinstance(unit, bool):
+            raise ValueError("Temperature unit must be 0.01 or 0.5 °C")
+        with self.lock:
+            d = self.device(str(data.get("id", "")))
+            if d["provider"] != "hubble":
+                raise ValueError("Only Hubble tags send a temperature field")
+            cfg = json.loads(d["config"])
+            cfg["temp_unit"] = unit
+            with self.db() as c:
+                c.execute("UPDATE devices SET config=? WHERE id=?", (json.dumps(cfg), d["id"]))
+        return {"ok": True}
+
     def delete(self, data):
         """Remove a device from the portal and stop collection, retaining its private files."""
         ident = str(data.get("id", ""))
@@ -388,7 +425,7 @@ class Portal:
             ident = ident or self.default
             if not ident:
                 return {"packets": []}
-            self.device(ident)
+            unit = hubble_temp_unit(json.loads(self.device(ident)["config"]))
             with self.db() as c:
                 rows = c.execute(
                     "SELECT observed_at,payload FROM packets WHERE device_id=? ORDER BY observed_at DESC LIMIT 50",
@@ -398,7 +435,7 @@ class Portal:
         for row in rows:
             packet = json.loads(row["payload"])
             entry = {"timestamp": row["observed_at"], "packet": packet}
-            if sensors := hubble_sensors(packet):
+            if sensors := hubble_sensors(packet, unit):
                 entry["sensors"] = sensors
             packets.append(entry)
         return {"packets": packets}
@@ -556,7 +593,8 @@ class Portal:
                         "database": f"devices/{ident}.sqlite3",
                     }
                     c.execute(
-                        "INSERT INTO devices(id,name,provider,active,config) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET config=excluded.config,name=excluded.name",
+                        # json_patch keeps settings made here (such as temp_unit) across every sync.
+                        "INSERT INTO devices(id,name,provider,active,config) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET config=json_patch(devices.config,excluded.config),name=excluded.name",
                         (ident, name, "hubble", 1, json.dumps(cfg)),
                     )
             if not cursor:
