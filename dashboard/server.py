@@ -251,7 +251,7 @@ class Handler(BaseHTTPRequestHandler):
             if not self.bearer():
                 return self.send(401, {"error": "Invalid access code"})
             secure = "; Secure" if self.headers.get("X-Forwarded-Proto") == "https" else ""
-            cookie = f"{COOKIE_NAME}={self.server.session}; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200{secure}"
+            cookie = f"{COOKIE_NAME}={self.server.session}; HttpOnly; SameSite=Lax; Path=/; Max-Age=43200{secure}"
             return self.send(200, {}, headers={"Set-Cookie": cookie})
 
         portal = self.server.portal
