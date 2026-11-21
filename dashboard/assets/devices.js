@@ -56,12 +56,15 @@
     }
 
     function renderDevice(device) {
-        const {id, name, provider, active, state, report_count, packet_count, key_saved} = device;
+        const {id, name, provider, active, state, report_count, packet_count, key_saved, status_format} = device;
         const row = document.createElement('div');
         row.className = 'inventory-row';
         const apple = provider === 'openhaystack';
         const providerName = apple ? 'OpenHaystack' : 'Hubble';
-        const packetInfo = apple ? '' : ` · ${packet_count} packets${key_saved ? ' · Key saved' : ''}`;
+        const tempTag = status_format === 'temp_half_c';
+        const packetInfo = apple
+            ? (tempTag ? ' · Sends temperature' : '')
+            : ` · ${packet_count} packets${key_saved ? ' · Key saved' : ''}`;
         const detail = `${providerName} · ${state.replaceAll('_', ' ')} · ${report_count} locations${packetInfo}`;
         row.append(node('strong', name), node('small', detail), action('View', () => switchDevice(id)));
 
@@ -72,6 +75,18 @@
                 try {
                     await request('/api/devices/rename', {id, name: next});
                     $('inventoryMessage').textContent = `${name} is now ${next.trim()}.`;
+                    await load();
+                } catch (error) {
+                    $('inventoryMessage').textContent = error.message;
+                }
+            }));
+            // A tag burned with a temperature config sends it in the Find My status byte (0.5 °C steps).
+            row.append(action(tempTag ? 'Stop reading temperature' : 'Read temperature', async () => {
+                try {
+                    await request('/api/devices/status-format', {id, status_format: tempTag ? null : 'temp_half_c'});
+                    $('inventoryMessage').textContent = tempTag
+                        ? `${name}: the status byte is no longer read as temperature.`
+                        : `${name}: the status byte is read as temperature (0.5 °C steps).`;
                     await load();
                 } catch (error) {
                     $('inventoryMessage').textContent = error.message;

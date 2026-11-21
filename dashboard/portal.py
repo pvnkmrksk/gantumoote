@@ -36,6 +36,19 @@ def parse_sensors(payload: bytes) -> dict:
             "adv_count": int.from_bytes(payload[3:7], "little")}
 
 
+# What an OpenHaystack tag puts in its Find My status byte (advert byte 6), which finders copy into
+# every location report. Plain tags send 0x00. gantu-tag's temperature configs send the IN100's
+# temperature as one signed byte in 0.5 degC steps (On-Chip Measurement Units: 0.5).
+STATUS_FORMATS = {"temp_half_c": "Temperature, signed byte × 0.5 °C"}
+
+
+def status_temperature(fmt, status):
+    """Decode a report's status byte for a device whose tag carries temperature there, else None."""
+    if fmt != "temp_half_c" or isinstance(status, bool) or not isinstance(status, int) or not 0 <= status <= 255:
+        return None
+    return (status - 256 if status > 127 else status) * 0.5
+
+
 def now():
     return datetime.now(timezone.utc).isoformat()
 
@@ -62,6 +75,8 @@ def location_db(path):
         "CREATE TABLE IF NOT EXISTS sightings(timestamp TEXT,latitude REAL,longitude REAL,accuracy_m REAL,first_fetched_at TEXT,UNIQUE(timestamp,latitude,longitude,accuracy_m))"
     )
     c.execute("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT)")
+    if "status" not in {row[1] for row in c.execute("PRAGMA table_info(sightings)")}:
+        c.execute("ALTER TABLE sightings ADD COLUMN status INTEGER")  # Find My status byte, NULL if unknown
     return c
 
 
@@ -166,14 +181,19 @@ class Portal:
     def device_history(self, d):
         reports = []
         cfg = json.loads(d["config"])
+        fmt = cfg.get("status_format")
         if cfg.get("database"):
             with location_db(self.path_for(d)) as c:
-                reports = [
-                    dict(zip(["timestamp", "latitude", "longitude", "accuracy_m"], r))
-                    for r in c.execute(
-                        "SELECT timestamp,latitude,longitude,accuracy_m FROM sightings ORDER BY timestamp,latitude,longitude,accuracy_m"
-                    )
-                ]
+                for *row, status in c.execute(
+                    "SELECT timestamp,latitude,longitude,accuracy_m,status FROM sightings ORDER BY timestamp,latitude,longitude,accuracy_m"
+                ):
+                    report = dict(zip(["timestamp", "latitude", "longitude", "accuracy_m"], row))
+                    if status is not None:
+                        report["status"] = status
+                        temp = status_temperature(fmt, status)
+                        if temp is not None:
+                            report["temp_c"] = temp
+                    reports.append(report)
                 row = c.execute("SELECT value FROM meta WHERE key='checked_at'").fetchone()
                 checked = row[0] if row else d["checked_at"]
         else:
@@ -182,6 +202,7 @@ class Portal:
             "device_id": d["id"],
             "tag": d["name"],
             "provider": d["provider"],
+            "status_format": fmt,
             "reports": reports,
             "report_count": len(reports),
             "checked_at": checked,
@@ -209,6 +230,7 @@ class Portal:
                     "checked_at": h["checked_at"],
                     "latest_observation": h["latest_observation"],
                     "key_saved": d["provider"] == "hubble" and self.hubble_key_path(d["id"]).is_file(),
+                    "status_format": h["status_format"],
                 }
             )
         with self.db() as c:
@@ -278,6 +300,24 @@ class Portal:
                 raise ValueError("Rename Hubble devices in the Hubble dashboard; the new name appears here at the next sync.")
             with self.db() as c:
                 c.execute("UPDATE devices SET name=? WHERE id=?", (name, d["id"]))
+        return {"ok": True}
+
+    def set_status_format(self, data):
+        """Say what an OpenHaystack tag sends in its Find My status byte: nothing (None) or a STATUS_FORMATS key."""
+        fmt = data.get("status_format") or None
+        if fmt is not None and fmt not in STATUS_FORMATS:
+            raise ValueError("Unknown status byte format")
+        with self.lock:
+            d = self.device(str(data.get("id", "")))
+            if d["provider"] != "openhaystack":
+                raise ValueError("Only OpenHaystack tags carry a Find My status byte")
+            cfg = json.loads(d["config"])
+            if fmt:
+                cfg["status_format"] = fmt
+            else:
+                cfg.pop("status_format", None)
+            with self.db() as c:
+                c.execute("UPDATE devices SET config=? WHERE id=?", (json.dumps(cfg), d["id"]))
         return {"ok": True}
 
     def delete(self, data):
@@ -382,11 +422,23 @@ class Portal:
                     -90 <= lat <= 90 and -180 <= lon <= 180 and acc >= 0
                 ):
                     continue
+                status = r.get("status")
+                if isinstance(status, bool) or not isinstance(status, int) or not 0 <= status <= 255:
+                    status = None
+                key = (timestamp(r["timestamp"]), lat, lon, acc)
                 result = c.execute(
-                    "INSERT OR IGNORE INTO sightings VALUES(?,?,?,?,?)",
-                    (timestamp(r["timestamp"]), lat, lon, acc, now()),
+                    "INSERT OR IGNORE INTO sightings(timestamp,latitude,longitude,accuracy_m,first_fetched_at,status)"
+                    " VALUES(?,?,?,?,?,?)",
+                    (*key, now(), status),
                 )
                 added += result.rowcount
+                if not result.rowcount and status is not None:
+                    # Sightings saved before the status byte was kept get it from Apple's 7-day history.
+                    c.execute(
+                        "UPDATE sightings SET status=? WHERE timestamp=? AND latitude=? AND longitude=?"
+                        " AND accuracy_m=? AND status IS NULL",
+                        (status, *key),
+                    )
             c.execute("INSERT OR REPLACE INTO meta VALUES('checked_at',?)", (now(),))
         with self.db() as c:
             c.execute("UPDATE devices SET checked_at=? WHERE id=?", (now(), d["id"]))

@@ -205,7 +205,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, history)
             with io.StringIO() as stream:
                 writer = csv.DictWriter(
-                    stream, fieldnames=["timestamp", "latitude", "longitude", "accuracy_m"]
+                    stream,
+                    fieldnames=["timestamp", "latitude", "longitude", "accuracy_m", "status", "temp_c"],
+                    extrasaction="ignore",
                 )
                 writer.writeheader()
                 writer.writerows(history["reports"])
@@ -259,6 +261,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/devices": portal.add,
             "/api/devices/update": portal.toggle,
             "/api/devices/rename": portal.rename,
+            "/api/devices/status-format": portal.set_status_format,
             "/api/devices/delete": portal.delete,
             "/api/devices/hubble-key": portal.save_hubble_key,
             "/api/connections/hubble": portal.connect,

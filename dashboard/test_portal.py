@@ -9,7 +9,7 @@ import unittest
 import threading
 from pathlib import Path
 from unittest.mock import patch
-from .portal import Portal, ProviderError, hubble_sensors, valid_key
+from .portal import Portal, ProviderError, hubble_sensors, status_temperature, valid_key
 
 
 class PortalTests(unittest.TestCase):
@@ -104,6 +104,46 @@ class PortalTests(unittest.TestCase):
         self.assertEqual(calls, [None, "page2"])
         self.assertEqual(len(self.portal.devices()), 3)
         self.assertNotIn("synthetic-token", json.dumps(self.portal.inventory()))
+
+    def test_status_byte_is_kept_and_read_as_temperature_only_when_set(self):
+        d = self.portal.device(self.primary)
+        base = {"latitude": 1, "longitude": 2, "accuracy_m": 3}
+        old = {"timestamp": "2026-01-01T00:00:00Z", **base}  # saved before status bytes were kept
+        self.portal.save_reports(d, [old])
+        added = self.portal.save_reports(
+            d,
+            [
+                {**old, "status": 0x2C},  # the same sighting again, now with its status byte
+                {"timestamp": "2026-01-01T00:01:00Z", **base, "status": 0xFE},
+                {"timestamp": "2026-01-01T00:02:00Z", **base, "status": True},  # not a byte
+            ],
+        )
+        self.assertEqual(added, 2)
+        reports = self.portal.history(self.primary)["reports"]
+        self.assertEqual([r.get("status") for r in reports], [0x2C, 0xFE, None])
+        self.assertFalse(any("temp_c" in r for r in reports))  # a plain tag's byte is not a temperature
+
+        self.portal.set_status_format({"id": self.primary, "status_format": "temp_half_c"})
+        history = self.portal.history(self.primary)
+        self.assertEqual(history["status_format"], "temp_half_c")
+        self.assertEqual([r.get("temp_c") for r in history["reports"]], [22.0, -1.0, None])
+        self.assertEqual(self.portal.inventory()["devices"][0]["status_format"], "temp_half_c")
+
+        self.portal.set_status_format({"id": self.primary, "status_format": None})
+        self.assertFalse(any("temp_c" in r for r in self.portal.history(self.primary)["reports"]))
+        with self.assertRaisesRegex(ValueError, "Unknown"):
+            self.portal.set_status_format({"id": self.primary, "status_format": "volts"})
+        self.prepare_hubble()
+        with self.assertRaisesRegex(ValueError, "Only OpenHaystack"):
+            self.portal.set_status_format({"id": self.portal.devices()[1]["id"], "status_format": "temp_half_c"})
+
+    def test_status_temperature_decoding(self):
+        cases = [(0x00, 0.0), (0x26, 19.0), (0x33, 25.5), (0x50, 40.0), (0x7F, 63.5), (0x80, -64.0), (0xFF, -0.5)]
+        for status, temp in cases:
+            self.assertEqual(status_temperature("temp_half_c", status), temp)
+        for status in [None, -1, 256, "0x26", True]:
+            self.assertIsNone(status_temperature("temp_half_c", status))
+        self.assertIsNone(status_temperature(None, 0x26))
 
     def prepare_hubble(self):
         con = self.connect()

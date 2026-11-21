@@ -129,6 +129,8 @@ def fetch():
                         "latitude": report.latitude,
                         "longitude": report.longitude,
                         "accuracy_m": report.horizontal_accuracy,
+                        # The tag's Find My status byte, copied into the report by the finder.
+                        "status": report_status(report),
                     }
                     for report in batch.get(key, [])
                 ]
@@ -140,6 +142,13 @@ def fetch():
     finally:
         if account is not None:
             account._evt_loop.run_until_complete(account.close())
+
+
+def report_status(report):
+    try:
+        return int(report.status)
+    except Exception:  # an undecrypted or malformed report keeps its location
+        return None
 
 
 def main():
