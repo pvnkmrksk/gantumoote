@@ -25,3 +25,49 @@ dialog{color:var(--text,#eee4f0);background:var(--panel,#201923);border:1px soli
     margin: 14px 0;
 }
 .privacy-note a{color:#ffb36a}
+
+/* v2 layout: a full-bleed map with floating glass panels. body.immersive ("Map only", or a tap on the map) slides
+   every panel off screen; a second tap brings them back. ui.js keeps the map's camera padding in step. */
+:root{--gap:12px;--head:60px;--side:312px;--radius:18px;--ease:cubic-bezier(.2,.8,.2,1);--glass:#ffffffd6;--glass-line:#ffffffcc;--glass-shadow:0 12px 40px #1b2d4a1f,0 2px 6px #1b2d4a12;--blur:blur(18px) saturate(1.6)}
+html[data-theme=dark]{--glass:#1b1722d9;--glass-line:#ffffff14;--glass-shadow:0 14px 48px #0000006b,0 2px 8px #00000052}
+body{background:#e8eef2}html[data-theme=dark] body{background:#100e14}
+main{display:block;height:auto}
+.map-column{position:fixed;inset:0;z-index:0}
+#map{inset:0}
+header,aside,.timeline-card{background:var(--glass);border:1px solid var(--glass-line);border-radius:var(--radius);box-shadow:var(--glass-shadow);-webkit-backdrop-filter:var(--blur);backdrop-filter:var(--blur)}
+html[data-theme=dark] header,html[data-theme=dark] aside,html[data-theme=dark] .timeline-card{background:var(--glass);border-color:var(--glass-line)}
+header{position:fixed;top:max(var(--gap),env(safe-area-inset-top));left:var(--gap);right:var(--gap);height:var(--head);padding:0 16px 0 14px}
+aside{position:fixed;top:calc(max(var(--gap),env(safe-area-inset-top)) + var(--head) + var(--gap));left:var(--gap);bottom:var(--gap);width:var(--side);border-right:1px solid var(--glass-line)}
+.map-top{top:calc(max(var(--gap),env(safe-area-inset-top)) + var(--head) + var(--gap));left:calc(var(--side) + 2*var(--gap));right:62px}
+.timeline-card{left:calc(var(--side) + 2*var(--gap));right:var(--gap);bottom:var(--gap);min-height:0;border-top:1px solid var(--glass-line)}
+.observation-card{border-radius:16px;box-shadow:var(--glass-shadow);-webkit-backdrop-filter:var(--blur);backdrop-filter:var(--blur)}
+.map-buttons button{border-radius:12px;-webkit-backdrop-filter:var(--blur);backdrop-filter:var(--blur);transition:background .2s,transform .15s}
+.map-buttons button:active,.pills button:active{transform:scale(.96)}
+button{transition:background .2s,border-color .2s,color .2s}
+.brand-icon,html[data-theme=dark] .brand-icon{background:linear-gradient(140deg,#f0a33a 0%,#d4673c 45%,#4a3a92 100%);color:#fff;box-shadow:0 4px 14px #d4673c40}
+.maplibregl-ctrl-top-right{top:calc(max(var(--gap),env(safe-area-inset-top)) + var(--head) + var(--gap));right:calc(var(--gap) - 10px)}
+.maplibregl-ctrl-bottom-right{bottom:var(--map-bottom,0px)}
+.maplibregl-ctrl-group{border-radius:12px!important;-webkit-backdrop-filter:var(--blur);backdrop-filter:var(--blur)}
+header,aside,.map-top,.timeline-card,.maplibregl-ctrl-top-right{transition:transform .5s var(--ease),opacity .35s var(--ease),visibility 0s linear 0s}
+.maplibregl-ctrl-bottom-right{transition:bottom .5s var(--ease)}
+.immersive header,.immersive aside,.immersive .map-top,.immersive .timeline-card,.immersive .maplibregl-ctrl-top-right{opacity:0;visibility:hidden;pointer-events:none;transition:transform .5s var(--ease),opacity .35s var(--ease),visibility 0s linear .5s}
+.immersive .observation-card,.immersive .map-buttons{pointer-events:none}
+.immersive header{transform:translateY(calc(-100% - 2*var(--gap)))}
+.immersive aside{transform:translateX(calc(-100% - 2*var(--gap)))}
+.immersive .map-top{transform:translateY(-28px)}
+.immersive .timeline-card{transform:translateY(calc(100% + 2*var(--gap)))}
+.immersive .maplibregl-ctrl-top-right{transform:translateX(16px)}
+.immersive .toast{bottom:max(24px,env(safe-area-inset-bottom))}
+@media(prefers-reduced-motion:reduce){header,aside,.map-top,.timeline-card,.maplibregl-ctrl-top-right,.maplibregl-ctrl-bottom-right{transition:none!important}}
+@media(max-width:1050px){:root{--side:285px}}
+@media(max-width:760px){
+:root{--gap:8px;--head:54px}
+header{padding:0 10px}
+main{height:auto}
+aside{width:min(330px,calc(100vw - 2*var(--gap)));transform:translateX(calc(-100% - 2*var(--gap)));transition:transform .35s var(--ease),opacity .35s var(--ease),visibility 0s linear 0s;z-index:30}
+aside.open{transform:translateX(0)}
+.scrim.open{inset:0;z-index:28;-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px)}
+.map-top{left:var(--gap);right:50px}
+.timeline-card{left:var(--gap);right:var(--gap);bottom:max(var(--gap),env(safe-area-inset-bottom));padding-bottom:12px}
+#map{bottom:0}
+}
