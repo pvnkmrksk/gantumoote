@@ -75,8 +75,18 @@ def sign_in():
 
     account = apple_account()
     try:
-        email = input("Apple account email: ").strip()
-        password = getpass.getpass("Apple account password: ")
+        email = ""
+        while not email:
+            email = input("Apple account email: ").strip()
+        password = ""
+        for attempt in range(3):
+            # Nothing is echoed, not even dots, so an empty answer is usually a paste that didn't land.
+            password = getpass.getpass("Apple account password (nothing shows as you type or paste): ")
+            if password:
+                break
+            print("No password received. Type or paste it, then press Enter.")
+        if not password:
+            raise SystemExit("No password entered.")
         state = account.login(email, password)
         del password
         if state == LoginState.REQUIRE_2FA:
