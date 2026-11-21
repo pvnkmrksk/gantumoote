@@ -1,6 +1,6 @@
 #!/bin/sh
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Pavan Kumar Kaushik. Part of gantu-tag, https://github.com/pvnkmrksk/gantu-tag (see NOTICE).
+# Copyright (C) 2026 Pavan Kumar Kaushik. Part of gantumoote, https://github.com/pvnkmrksk/gantumoote (see NOTICE).
 # Install boot services using the dashboard's existing Python environment.
 set -eu
 umask 077
@@ -21,9 +21,9 @@ test -x dashboard/.venv/bin/python || {
 dashboard/.venv/bin/python -c 'import cryptography, markdown, pywebpush'
 units=$(mktemp -d)
 trap 'rm -rf "$units"' EXIT
-cat > "$units/gantu-dashboard.service" <<UNIT
+cat > "$units/gantumoote.service" <<UNIT
 [Unit]
-Description=Gantu dashboard and tag collector
+Description=Gantumoote dashboard and tag collector
 Wants=network-online.target
 After=network-online.target
 
@@ -41,9 +41,9 @@ ProtectSystem=full
 [Install]
 WantedBy=multi-user.target
 UNIT
-cat > "$units/gantu-backup.service" <<UNIT
+cat > "$units/gantumoote-backup.service" <<UNIT
 [Unit]
-Description=Back up local Gantu dashboard SQLite history
+Description=Back up local Gantumoote SQLite history
 
 [Service]
 Type=oneshot
@@ -52,9 +52,9 @@ WorkingDirectory=$root
 ExecStart=$root/dashboard/.venv/bin/python -m dashboard.backup
 UMask=0077
 UNIT
-cat > "$units/gantu-backup.timer" <<'UNIT'
+cat > "$units/gantumoote-backup.timer" <<'UNIT'
 [Unit]
-Description=Daily Gantu dashboard backup
+Description=Daily Gantumoote backup
 
 [Timer]
 OnCalendar=daily
@@ -68,11 +68,11 @@ if [ -f dashboard/data/cloudflared.yml ]; then
         echo 'Install cloudflared before enabling your configured tunnel.' >&2; exit 1
     }
     cloudflared tunnel --config "$root/dashboard/data/cloudflared.yml" ingress validate
-    cat > "$units/gantu-tunnel.service" <<UNIT
+    cat > "$units/gantumoote-tunnel.service" <<UNIT
 [Unit]
-Description=Gantu dashboard named Cloudflare Tunnel
-Wants=network-online.target gantu-dashboard.service
-After=network-online.target gantu-dashboard.service
+Description=Gantumoote named Cloudflare Tunnel
+Wants=network-online.target gantumoote.service
+After=network-online.target gantumoote.service
 
 [Service]
 User=$user
@@ -88,12 +88,43 @@ PrivateTmp=true
 WantedBy=multi-user.target
 UNIT
 fi
+if [ -f dashboard/data/cloud-backup.json ]; then
+    command -v age >/dev/null || { echo 'Install age (sudo apt install age) for the cloud backup.' >&2; exit 1; }
+    cat > "$units/gantumoote-cloud-backup.service" <<UNIT
+[Unit]
+Description=Push an encrypted Gantumoote backup to its private Git repository
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=$user
+WorkingDirectory=$root
+ExecStart=$root/dashboard/.venv/bin/python -m dashboard.cloud_backup
+UMask=0077
+UNIT
+    cat > "$units/gantumoote-cloud-backup.timer" <<'UNIT'
+[Unit]
+Description=Daily encrypted Gantumoote cloud backup
+
+[Timer]
+OnCalendar=*-*-* 03:40
+RandomizedDelaySec=20min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+UNIT
+fi
 sudo install -m 644 "$units/"* /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now gantu-dashboard.service gantu-backup.timer
-sudo systemctl restart gantu-dashboard.service
-if [ -f "$units/gantu-tunnel.service" ]; then
-    sudo systemctl enable --now gantu-tunnel.service
-    sudo systemctl restart gantu-tunnel.service
+sudo systemctl enable --now gantumoote.service gantumoote-backup.timer
+sudo systemctl restart gantumoote.service
+if [ -f "$units/gantumoote-tunnel.service" ]; then
+    sudo systemctl enable --now gantumoote-tunnel.service
+    sudo systemctl restart gantumoote-tunnel.service
 fi
-echo 'Gantu is enabled at boot. Run dashboard/.venv/bin/python -m dashboard.check to verify.'
+if [ -f "$units/gantumoote-cloud-backup.timer" ]; then
+    sudo systemctl enable --now gantumoote-cloud-backup.timer
+fi
+echo 'Gantumoote is enabled at boot. Run dashboard/.venv/bin/python -m dashboard.check to verify.'

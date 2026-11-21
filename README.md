@@ -1,4 +1,8 @@
-# Self-host the Gantu dashboard
+# Gantumoote
+
+*ಗಂಟುಮೂಟೆ*, a bundle of everything you carry: the self-hosted dashboard for [gantu tags](https://github.com/pvnkmrksk/gantu-tag),
+the insect-sized Find My and Hubble trackers. It collects every tag's sightings on your own Raspberry Pi or
+laptop and maps them, full screen, with the newest sighting the most vivid. Tap the map to hide the panels.
 
 Run the dashboard on a Raspberry Pi or a laptop. It fetches reports for your Apple Find My
 (OpenHaystack) and Hubble tags and shows them together in a device selector. Each tag has its own
@@ -6,7 +10,7 @@ history, with a map, timeline and CSV/GeoJSON export. Hubble packets can also sh
 temperature and the advert count since power-up.
 
 Start with a tag that already advertises on the network you chose in the
-[programming guide](programming.md#network-payloads). The Pi or laptop needs internet access to
+[programming guide](https://github.com/pvnkmrksk/gantu-tag/blob/main/docs/programming.md#network-payloads). The Pi or laptop needs internet access to
 fetch reports. The tags can be anywhere a relay hears them.
 
 ## 1. Start the dashboard
@@ -23,8 +27,8 @@ On macOS, if you need Python, `brew install python@3.13` installs it as `python3
 host, run the following in a terminal (use `python3.13` on the second line if needed):
 
 ```sh
-git clone https://github.com/pvnkmrksk/gantu-tag.git
-cd gantu-tag
+git clone https://github.com/pvnkmrksk/gantumoote.git
+cd gantumoote
 python3 -m venv dashboard/.venv
 dashboard/.venv/bin/python -m pip install -r dashboard/requirements.txt
 dashboard/.venv/bin/python -m dashboard.server
@@ -67,7 +71,7 @@ standard base64 matching the advert you burned into the tag.
    use `sudo apt install p7zip-full`). On macOS use `brew install sevenzip`.
 2. Run the following on the host that will collect the reports, under the same user that runs
    the dashboard. Stop a running dashboard first with Ctrl-C or
-   `sudo systemctl stop gantu-dashboard.service` on an installed Pi.
+   `sudo systemctl stop gantumoote.service` on an installed Pi.
 
    ```sh
    dashboard/.venv/bin/python -m pip install -r dashboard/requirements-apple.txt
@@ -101,7 +105,7 @@ check can simply mean no relay has reported a new position.
    config and confirm a packet for that device in Hubble Dashboard.
 2. In Hubble's **Developer Tools → API Tokens**, get your organization ID and create a token
    with **read-devices** and **read-packets**. See the [Hubble Platform API](https://hubble.com/docs/api-specification/hubble-platform-api).
-3. In Gantu, open **Devices & connections → Connect Hubble**. Enter the organization ID and
+3. In Gantumoote, open **Devices & connections → Connect Hubble**. Enter the organization ID and
    the API token. The collector discovers devices in that organization, then polls for packets.
    New registrations can take about five minutes to appear. If the token expires, enter a
    replacement for the same organization ID.
@@ -111,7 +115,7 @@ check can simply mean no relay has reported a new position.
 Hubble's API returns the decrypted payload as base64. For the seven-byte Gantu format the
 dashboard decodes supply voltage, signed temperature and the unsigned advert count. Other payloads
 are shown as raw packets. The field layout and example are in
-[Network payloads](programming.md#network-payloads).
+[Network payloads](https://github.com/pvnkmrksk/gantu-tag/blob/main/docs/programming.md#network-payloads).
 
 **Save key** on a Hubble device stores its AES-128 key for your records (32 hex digits or standard
 base64). The organization token is what the collector uses to fetch cloud reports.
@@ -132,9 +136,9 @@ On a laptop, the foreground server runs while the laptop is awake. The same syst
 works on a Linux laptop that uses systemd.
 
 ```sh
-systemctl is-enabled gantu-dashboard.service gantu-backup.timer
-sudo systemctl restart gantu-dashboard.service
-journalctl -u gantu-dashboard.service -n 40 --no-pager
+systemctl is-enabled gantumoote.service gantumoote-backup.timer
+sudo systemctl restart gantumoote.service
+journalctl -u gantumoote.service -n 40 --no-pager
 ```
 
 When you can interrupt service, reboot the Pi and run `dashboard.check` again. The Pi's LAN
@@ -148,12 +152,12 @@ loopback server. Use a domain you manage with Cloudflare and install **cloudflar
 For the setup commands and install packages, see
 [Cloudflare's locally managed tunnel guide](https://developers.cloudflare.com/tunnel/features/locally-managed-tunnels/create-local-tunnel/).
 
-1. Run `cloudflared tunnel login`, then `cloudflared tunnel create gantu-dashboard`. The latter
+1. Run `cloudflared tunnel login`, then `cloudflared tunnel create gantumoote`. The latter
    gives you a tunnel UUID and the path to its credential JSON. Add a DNS route using your own
    hostname, for example:
 
    ```sh
-   cloudflared tunnel route dns gantu-dashboard tracker.example.org
+   cloudflared tunnel route dns gantumoote tracker.example.org
    ```
 
 2. Create `dashboard/data/cloudflared.yml`. Replace the UUID, credential path and hostname in
@@ -188,6 +192,62 @@ For the setup commands and install packages, see
    notifications. On iOS, add the dashboard to the Home Screen, then enable notifications
    from the installed app.
 
+**Changing the hostname later** (for example when a domain lapses) moves no data. Add the new domain to
+Cloudflare, run `cloudflared tunnel route dns gantumoote new.example.org`, put the new hostname in
+`dashboard/data/cloudflared.yml` and `dashboard/data/public-url.txt`, and restart the tunnel and the
+dashboard. Browsers sign in once on the new address, and notifications have to be enabled again on each
+device, because both belong to the old address.
+
+## 5. Encrypted cloud backup (optional)
+
+Once a day the host can push an encrypted copy of `dashboard/data/` (history, registry, device keys, the
+Apple session, the Hubble token and the access code) to a private Git repository. It's encrypted with
+[age](https://age-encryption.org) to a key that you keep elsewhere, so the repository only ever holds
+ciphertext. Local snapshots and what `setup_apple` downloads again (FindMy.py, the emulator, Apple's
+CoreADI library) are left out. A run commits only when something changed.
+
+1. On a computer you keep (not the host), make the key and keep the identity file in your password
+   manager. Without it the backup can't be read:
+
+   ```sh
+   age-keygen -o gantumoote-backup-identity.txt   # prints the public key, age1...
+   ```
+
+2. Create a private repository, for example `you/gantumoote-backup`. On the host, install age, make a
+   deploy key and pin GitHub's SSH host keys (compare the fingerprints with
+   [GitHub's published ones](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints)):
+
+   ```sh
+   sudo apt install age
+   ssh-keygen -t ed25519 -N '' -C gantumoote-backup -f dashboard/data/secrets/cloud-backup-key
+   ssh-keyscan github.com > dashboard/data/secrets/github-known-hosts
+   ssh-keygen -lf dashboard/data/secrets/github-known-hosts
+   ```
+
+   Add `cloud-backup-key.pub` to the repository under **Settings → Deploy keys**, with write access.
+   That key can reach only this one repository.
+
+3. Point the host at the repository and your public key, push the first backup, and enable the daily
+   timer:
+
+   ```sh
+   printf '%s\n' '{"repo": "git@github.com:you/gantumoote-backup.git", "recipient": "age1..."}' > dashboard/data/cloud-backup.json
+   dashboard/.venv/bin/python -m dashboard.cloud_backup
+   dashboard/pi/install.sh
+   ```
+
+**Restore** on a new host: install Gantumoote, then
+
+```sh
+git clone git@github.com:you/gantumoote-backup.git
+mkdir -p dashboard/data
+age -d -i gantumoote-backup-identity.txt gantumoote-backup/gantumoote-data.tar.gz.age | tar -xz -C dashboard/data
+dashboard/.venv/bin/python -m dashboard.setup_apple
+```
+
+Fix the absolute paths in `cloudflared.yml` if the checkout moved, and start only one host. Each backup
+adds a few hundred KiB to the repository's history; squash it if it ever grows large.
+
 ## History, keys and backups
 
 | Item | Where it lives |
@@ -211,7 +271,8 @@ failure, keep a separate private copy of the snapshots and matching `secrets/` d
 To move hosts, stop the old dashboard and tunnel, then transfer your own data securely to
 the new host. Install the dependencies there and start only that host.
 
-GitHub is for source code. The dashboard's entire `data/` directory and virtual environment
-are ignored. The collector doesn't upload its keys, logs, backups or history to GitHub. Map
+This repository is for source code. The dashboard's entire `data/` directory and virtual environment
+are ignored. Apart from the optional encrypted backup above, the collector doesn't upload its keys, logs,
+backups or history anywhere. Map
 tiles come from [OpenFreeMap](https://openfreemap.org/), so the browser requests tiles for the
 area you're viewing. Only track tags you own, or have permission to follow.

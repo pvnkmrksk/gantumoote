@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Pavan Kumar Kaushik. Part of gantu-tag, https://github.com/pvnkmrksk/gantu-tag (see NOTICE).
+# Copyright (C) 2026 Pavan Kumar Kaushik. Part of gantumoote, https://github.com/pvnkmrksk/gantumoote (see NOTICE).
 """Run the private dashboard and provider collector on loopback."""
 
 import base64
@@ -109,7 +109,7 @@ class Dashboard(ThreadingHTTPServer):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "GantuDashboard"
+    server_version = "Gantumoote"
     sys_version = ""
 
     def log_message(self, *_):
@@ -154,8 +154,8 @@ class Handler(BaseHTTPRequestHandler):
                 200,
                 {
                     "id": "/",
-                    "name": "Gantu dashboard",
-                    "short_name": "Gantu",
+                    "name": "Gantumoote",
+                    "short_name": "Gantumoote",
                     "start_url": "/",
                     "display": "standalone",
                     "background_color": "#141119",
@@ -283,7 +283,7 @@ class Handler(BaseHTTPRequestHandler):
             except (AttributeError, TypeError, ValueError):
                 return self.send(400, {"error": "Invalid subscription"})
         if path == "/api/test-push":
-            delivered = self.server.push("Gantu dashboard", "Notifications are working.")
+            delivered = self.server.push("Gantumoote", "Notifications are working.")
             return self.send(200 if delivered else 409, {"delivered": delivered})
         return self.send(404, {})
 
@@ -303,7 +303,7 @@ def main():
 
         signal.signal(signal.SIGTERM, shutdown)
         signal.signal(signal.SIGINT, shutdown)
-        print(f"Gantu dashboard at {LOCAL_URL}. Access code file: {PRIVATE / 'access-code.txt'}", flush=True)
+        print(f"Gantumoote at {LOCAL_URL}. Access code file: {PRIVATE / 'access-code.txt'}", flush=True)
         try:
             server.serve_forever()
         finally:

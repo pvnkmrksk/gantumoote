@@ -1,0 +1,51 @@
+gantumoote
+Copyright (C) 2026 Pavan Kumar Kaushik
+Source Location: https://github.com/pvnkmrksk/gantumoote
+
+Gantumoote is the self-hosted dashboard for gantu tags (https://github.com/pvnkmrksk/gantu-tag).
+It is free software that must stay free. Anyone may use, study, change, run and share it,
+commercially or not, on two conditions that carry on to everything made from it:
+
+  1. Credit. Keep this notice, and credit the author wherever the software or anything made from
+     it is published, shown, run for others or sold:
+
+         Based on gantumoote by Pavan Kumar Kaushik, https://github.com/pvnkmrksk/gantumoote
+
+  2. Share alike. Release what you make from it under the same licence, with its source, including
+     to people who use a modified version over a network.
+
+
+LICENCE
+
+GNU Affero General Public License v3.0 or any later version (AGPL-3.0-or-later), full text in
+LICENSE. It covers everything in this repository except the third-party material below.
+
+Attribution in the software (AGPL-3.0 section 7(b)). The credit line above is an author
+attribution that must be preserved in the source code, and in the Appropriate Legal Notices
+displayed by any program built from it, such as the dashboard's interface.
+
+
+THIRD-PARTY MATERIAL (keeps its own licence)
+
+    dashboard/assets/maplibre.js and maplibre.css: MapLibre GL JS, BSD-3-Clause
+        (dashboard/assets/MAPLIBRE-LICENSE).
+    The colour tables in dashboard/assets/trajectory.js: d3-scale-chromatic, ISC
+        (dashboard/assets/D3-COLOR-LICENSE).
+
+Not part of this repository: FindMy.py (MIT) and the Apple authentication helper os-findmy-e
+(GPL-2.0-only), which dashboard/setup_apple.py downloads onto your own host, along with Apple's
+CoreADI library. GPL-2.0-only code can't be combined with AGPL-3.0 code in one distributed program,
+so ship the dashboard and that helper separately.
+
+
+HISTORY
+
+This code was developed in gantu-tag (https://github.com/pvnkmrksk/gantu-tag) and moved here with
+its history on 21 November 2026. Up to and including gantu-tag commit 53f775e (20 November 2026)
+it was published under the MIT licence; copies of those versions keep that licence.
+
+
+NO WARRANTY
+
+The software is provided as is, without warranty of any kind; see the disclaimer in the licence.
+You run it at your own risk.

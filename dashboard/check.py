@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Pavan Kumar Kaushik. Part of gantu-tag, https://github.com/pvnkmrksk/gantu-tag (see NOTICE).
+# Copyright (C) 2026 Pavan Kumar Kaushik. Part of gantumoote, https://github.com/pvnkmrksk/gantumoote (see NOTICE).
 """Check the dashboard without printing private keys or locations."""
 
 import argparse
@@ -18,7 +18,7 @@ def main():
     if args.public and origin == LOCAL_URL:
         parser.error("Set the public address in dashboard/data/public-url.txt first.")
     path = origin + "/api/devices"
-    headers = {"User-Agent": "GantuDashboard/1.0"}
+    headers = {"User-Agent": "Gantumoote/1.0"}
     try:
         with urlopen(Request(path, headers=headers), timeout=15):
             raise SystemExit("ERROR: device inventory is available without signing in")

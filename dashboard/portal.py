@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# Copyright (C) 2026 Pavan Kumar Kaushik. Part of gantu-tag, https://github.com/pvnkmrksk/gantu-tag (see NOTICE).
+# Copyright (C) 2026 Pavan Kumar Kaushik. Part of gantumoote, https://github.com/pvnkmrksk/gantumoote (see NOTICE).
 """Device registry and serialized provider collection; never return credentials."""
 
 import base64
@@ -21,8 +21,19 @@ from urllib.parse import quote, urlencode
 from urllib.error import HTTPError
 from cryptography.hazmat.primitives.asymmetric import ec
 
-from tools.hubble_decode import parse_sensors
 from .settings import PROJECT, REGISTRY, write_private
+
+# The gantu sensor payload, as in gantu-tag's tools/hubble_decode.py and configs/hubble-template.cfg.
+VCC_UNIT, TEMP_UNIT = 0.03125, 0.01  # V and degC per count
+
+
+def parse_sensors(payload: bytes) -> dict:
+    """7-byte gantu sensor payload: VCC (1), temperature (2, signed), advertising count (4); little-endian."""
+    if len(payload) != 7:
+        raise ValueError(f"expected 7 bytes, got {len(payload)}")
+    return {"vcc_v": round(payload[0] * VCC_UNIT, 3),
+            "temp_c": round(int.from_bytes(payload[1:3], "little", signed=True) * TEMP_UNIT, 2),
+            "adv_count": int.from_bytes(payload[3:7], "little")}
 
 
 def now():
@@ -143,7 +154,7 @@ class Portal:
                 return self.device_history(self.device(ident))
         return {
             "device_id": None,
-            "tag": "Gantu",
+            "tag": "Gantumoote",
             "provider": None,
             "reports": [],
             "report_count": 0,
@@ -445,7 +456,7 @@ class Portal:
         headers = {
             "Authorization": "Bearer " + token,
             "Accept": "application/json",
-            "User-Agent": "GantuDashboard/1.0",
+            "User-Agent": "Gantumoote/1.0",
         }
         if cursor:
             headers["Continuation-Token"] = cursor

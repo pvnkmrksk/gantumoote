@@ -1,0 +1,6 @@
+# Host-local state: keys, tokens, sessions, logs, SQLite history, backups, tunnel config
+/dashboard/data/
+/dashboard/.venv/
+__pycache__/
+*.pyc
+.DS_Store
