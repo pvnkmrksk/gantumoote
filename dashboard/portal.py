@@ -255,6 +255,20 @@ class Portal:
                 )
         return {"ok": True}
 
+    def rename(self, data):
+        """Rename an OpenHaystack tag. History and exports carry the new name from now on."""
+        name = str(data.get("name", "")).strip()
+        if not 1 <= len(name) <= 100:
+            raise ValueError("Enter a device name (1–100 characters)")
+        with self.lock:
+            d = self.device(str(data.get("id", "")))
+            if d["provider"] != "openhaystack":
+                # Discovery copies every Hubble device's name from the organization on each sync.
+                raise ValueError("Rename Hubble devices in the Hubble dashboard; the new name appears here at the next sync.")
+            with self.db() as c:
+                c.execute("UPDATE devices SET name=? WHERE id=?", (name, d["id"]))
+        return {"ok": True}
+
     def delete(self, data):
         """Remove a device from the portal and stop collection, retaining its private files."""
         ident = str(data.get("id", ""))

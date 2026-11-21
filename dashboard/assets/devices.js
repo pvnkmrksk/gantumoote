@@ -66,6 +66,17 @@
         row.append(node('strong', name), node('small', detail), action('View', () => switchDevice(id)));
 
         if (apple) {
+            row.append(action('Rename', async () => {
+                const next = prompt(`New name for "${name}"`, name);
+                if (next === null || next.trim() === name) return;
+                try {
+                    await request('/api/devices/rename', {id, name: next});
+                    $('inventoryMessage').textContent = `${name} is now ${next.trim()}.`;
+                    await load();
+                } catch (error) {
+                    $('inventoryMessage').textContent = error.message;
+                }
+            }));
             row.append(action(active ? 'Pause collection' : 'Enable collection', async () => {
                 try {
                     await request('/api/devices/update', {id, active: !active});

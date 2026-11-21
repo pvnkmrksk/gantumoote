@@ -47,6 +47,24 @@ class PortalTests(unittest.TestCase):
         self.assertEqual(self.portal.history(ident)["report_count"], 1)
         self.assertEqual((self.root / json.loads(d["config"])["key_file"]).stat().st_mode & 0o777, 0o600)
 
+    def test_rename_keeps_history_and_leaves_hubble_names_to_hubble(self):
+        d = self.portal.device(self.primary)
+        report = {"timestamp": "2026-01-01T00:00:00Z", "latitude": 1, "longitude": 2, "accuracy_m": 3}
+        self.portal.save_reports(d, [report])
+        self.portal.rename({"id": self.primary, "name": "  Hagalu-001 "})
+        history = self.portal.history(self.primary)
+        self.assertEqual((history["tag"], history["report_count"]), ("Hagalu-001", 1))
+        for name in ["", " ", "x" * 101]:
+            with self.assertRaisesRegex(ValueError, "device name"):
+                self.portal.rename({"id": self.primary, "name": name})
+        with self.assertRaisesRegex(ValueError, "not found"):
+            self.portal.rename({"id": "missing", "name": "Other"})
+        self.prepare_hubble()
+        hubble = self.portal.devices()[1]
+        with self.assertRaisesRegex(ValueError, "Hubble dashboard"):
+            self.portal.rename({"id": hubble["id"], "name": "Local name"})
+        self.assertEqual(self.portal.device(self.primary)["name"], "Hagalu-001")
+
     def test_apple_devices_share_one_cycle_and_keep_reports_separate(self):
         from types import SimpleNamespace
 

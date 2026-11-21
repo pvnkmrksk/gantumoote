@@ -201,7 +201,9 @@ For the setup commands and install packages, see
 **Devices & connections → Delete** hides a device and stops collecting for it. It keeps its
 history and keys on your host for recovery. Hubble discoveries skip deleted devices while
 the organization connection continues to collect for the others. **Pause collection** on an
-OpenHaystack tag keeps it visible and lets you resume later.
+OpenHaystack tag keeps it visible and lets you resume later. **Rename** changes an OpenHaystack
+tag's name and keeps its history; exports use the new name. A Hubble device takes its name from
+the Hubble dashboard, so rename it there and the new name appears at the next sync.
 
 The Pi's daily timer keeps the latest 14 SQLite snapshots per database. To make a snapshot on
 a laptop, run `dashboard/.venv/bin/python -m dashboard.backup`. For recovery after storage

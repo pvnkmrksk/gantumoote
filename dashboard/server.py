@@ -258,6 +258,7 @@ class Handler(BaseHTTPRequestHandler):
         actions = {
             "/api/devices": portal.add,
             "/api/devices/update": portal.toggle,
+            "/api/devices/rename": portal.rename,
             "/api/devices/delete": portal.delete,
             "/api/devices/hubble-key": portal.save_hubble_key,
             "/api/connections/hubble": portal.connect,
