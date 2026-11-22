@@ -3,10 +3,12 @@
 """Run the private dashboard and provider collector on loopback."""
 
 import base64
+from collections import OrderedDict
 import csv
 import hashlib
 import hmac
 import io
+import ipaddress
 import json
 import logging
 import os
@@ -14,6 +16,8 @@ import secrets
 import signal
 import sqlite3
 import threading
+import time
+from datetime import datetime, timedelta, timezone
 from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
@@ -22,6 +26,8 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from pywebpush import WebPushException, webpush
 
+from . import flash
+from .ble import reception_history
 from .guide_view import guide_html, GUIDES
 from .portal import ClosingConnection, Portal
 from .settings import DATA, HERE, LOCAL_URL, PRIVATE, PUSH_DB, public_url, write_private
@@ -34,6 +40,7 @@ ASSETS = {
     "ui.js": "application/javascript",
     "devices.js": "application/javascript",
     "ui.css": "text/css",
+    "flash.css": "text/css",
 }
 ICON = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192">
 <rect width="192" height="192" rx="36" fill="#141119"/>
@@ -47,6 +54,8 @@ class Dashboard(ThreadingHTTPServer):
     def __init__(self, address):
         super().__init__(address, Handler)
         self.portal = Portal(DATA)
+        self.login_failures = OrderedDict()
+        self.login_lock = threading.Lock()
         PRIVATE.mkdir(parents=True, exist_ok=True, mode=0o700)
         access_file = PRIVATE / "access-code.txt"
         if not access_file.is_file():
@@ -74,6 +83,17 @@ class Dashboard(ThreadingHTTPServer):
             db.execute(
                 "CREATE TABLE IF NOT EXISTS subscriptions(endpoint TEXT PRIMARY KEY, subscription TEXT NOT NULL)"
             )
+
+    def login_limited(self, client):
+        now = time.monotonic()
+        with self.login_lock:
+            expires, failures = self.login_failures.pop(client, (now + 60, 0))
+            if expires <= now:
+                expires, failures = now + 60, 0
+            self.login_failures[client] = (expires, min(failures + 1, 9))
+            if len(self.login_failures) > 2048:
+                self.login_failures.popitem(last=False)
+            return failures >= 8
 
     def push_db(self):
         return sqlite3.connect(DATA / PUSH_DB, timeout=15, factory=ClosingConnection)
@@ -146,6 +166,15 @@ class Handler(BaseHTTPRequestHandler):
             return False
         return cookie is not None and hmac.compare_digest(cookie.value.encode(), self.server.session.encode())
 
+    def login_client(self):
+        client = self.client_address[0]
+        if ipaddress.ip_address(client).is_loopback and self.headers.get("CF-Ray"):
+            try:
+                return str(ipaddress.ip_address(self.headers.get("CF-Connecting-IP", "")))
+            except ValueError:
+                pass
+        return client
+
     def do_GET(self):
         url = urlsplit(self.path)
         path = url.path
@@ -181,6 +210,30 @@ class Handler(BaseHTTPRequestHandler):
             )
             page = (HERE / "ui.html").read_text().replace("__BOOT_JSON__", boot)
             return self.send(200, page, "text/html; charset=utf-8")
+        if path == "/flash":
+            return self.send(200, flash.page(DATA), "text/html; charset=utf-8", {
+                "Content-Security-Policy": "default-src 'none'; style-src 'self'; base-uri 'none'; frame-ancestors 'none'",
+            })
+        if path == "/flash/ble.csv":
+            since = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()[:16]
+            with io.StringIO() as stream:
+                writer = csv.writer(stream)
+                writer.writerow(("tag", "minute_utc", "receptions", "last_seen_utc", "rssi_dbm", "status_byte"))
+                writer.writerows(reception_history(DATA, since))
+                return self.send(200, stream.getvalue(), "text/csv", {
+                    "Content-Disposition": 'attachment; filename="pi-ble-last-24h.csv"',
+                })
+        if path.startswith("/flash/files/"):
+            if self.headers.get("Sec-Fetch-Site") not in (None, "none", "same-origin"):
+                return self.send(403, {"error": "Open the files from Flash history"})
+            name = path.removeprefix("/flash/files/")
+            contents = flash.download(DATA, name)
+            if contents is None:
+                return self.send(404, {"error": "Private file unavailable"})
+            return self.send(200, contents, "application/octet-stream", {
+                "Content-Disposition": f'attachment; filename="{name}"',
+                "Cross-Origin-Resource-Policy": "same-origin",
+            })
         if path.startswith("/assets/"):
             name = path.removeprefix("/assets/")
             if name in ASSETS:
@@ -251,6 +304,9 @@ class Handler(BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
         if path == "/session":
             if not self.bearer():
+                if self.server.login_limited(self.login_client()):
+                    return self.send(429, {"error": "Too many sign-in attempts. Try again in a minute."},
+                                     headers={"Retry-After": "60"})
                 return self.send(401, {"error": "Invalid access code"})
             secure = "; Secure" if self.headers.get("X-Forwarded-Proto") == "https" else ""
             cookie = f"{COOKIE_NAME}={self.server.session}; HttpOnly; SameSite=Lax; Path=/; Max-Age=43200{secure}"

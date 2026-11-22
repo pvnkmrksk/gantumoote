@@ -248,6 +248,47 @@ dashboard/.venv/bin/python -m dashboard.setup_apple
 Fix the absolute paths in `cloudflared.yml` if the checkout moved, and start only one host. Each backup
 adds a few hundred KiB to the repository's history; squash it if it ever grows large.
 
+## Flash history and Pi BLE
+
+Sign in with the normal dashboard access code and open **Devices & connections → Flash history & Pi BLE**.
+The table shows confirmed OTP records, prepared tag-specific files and the last advertisement
+heard locally by the Pi. Download a prepared config for the physical unit you are about to program.
+Each config uses its own tag identity. Keep both the config and its key private.
+
+Start the receiver on Raspberry Pi OS from the checkout:
+
+```sh
+sudo apt install bluez python3-dbus python3-gi
+dashboard/pi/install-ble.sh
+systemctl status gantumoote-ble --no-pager
+journalctl -u gantumoote-ble -n 25 --no-pager
+/usr/bin/python3 -m dashboard.ble capture ~/blelog/burn.btsnoop
+```
+
+The BLE monitor uses BlueZ on `hci0` and matches Find My manufacturer data against the advertisement
+keys in `dashboard/data/secrets/tag-keys/`. It saves only registered tags and updates the dashboard every
+10 seconds. Download a CSV of the last 24 hours of received advertisements, grouped by tag and UTC minute. Hubble network
+reports still appear in the main dashboard. Old raw captures stay in the Pi's private `~/blelog`
+directory. The capture command reports their actual first and last packet timestamps.
+
+Archive each new OTP burn while the programmer's output is still available. Keep the matching prepared
+config and key under `dashboard/data/secrets/tag-keys/` with mode 600. Copy the tool’s output to the Pi
+over SSH and run this as the dashboard user with the actual board, timestamp and filenames:
+
+```sh
+tag=Hagalu-004
+dashboard/.venv/bin/python -m dashboard.flash "$tag" S6L findmy '2026-11-22T18:00:00+01:00' \
+  --config ~/programmed.cfg --source hagalu_004.findmy-temp-tx4.cfg --temperature
+sudo chattr +i "dashboard/data/flash-history/$tag.json" \
+  "dashboard/data/secrets/flash-artifacts/$tag/programmed.cfg"
+```
+
+On an ext4 Pi, set `sudo chattr +a dashboard/data/flash-history` after the first record is saved.
+That permits new serials to be added and protects the history directory against deletion or replacement.
+The command accepts an identical retry and rejects a different record for the same serial.
+The existing age-encrypted cloud backup includes these records and files. After a restore, reapply the
+file flags and the directory flag on ext4.
+
 ## History, keys and backups
 
 | Item | Where it lives |
