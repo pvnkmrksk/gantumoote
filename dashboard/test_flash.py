@@ -101,6 +101,18 @@ class BenchTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             local_phone_url("http://example.org:8080")
 
+    def test_phyphox_keeps_the_last_reading_before_the_ble_run(self):
+        client = LightClient("http://192.168.1.15:8080")
+        client.armed_at = 1100
+        anchors = [{"event": "START", "experimentTime": 0.0, "systemTime": 1000.0}]
+        data = {"status": {"measuring": True}, "buffer": {
+            "illum_time": {"buffer": [35, 40]},
+            "illum": {"buffer": [500, 10558.6]},
+        }}
+        with patch.object(client, "get", side_effect=[anchors, data, anchors, data]):
+            self.assertEqual(("Measuring", [(1040, 40, 10558.6)]), client.poll())
+            self.assertEqual(("Measuring", []), client.poll())
+
     def test_hubble_requires_an_authenticated_matching_advertisement(self):
         (self.keys / "hagalu_002.hubble.key").write_text(
             "key_hex: 000102030405060708090a0b0c0d0e0f\nperiod_exponent: 15\n"

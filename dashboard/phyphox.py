@@ -80,6 +80,8 @@ class LightClient:
         if len(intervals) != len(illuminance):
             return status, []
         experiment_times = [item[0] for item in starts]
+        first_batch = self.last is None
+        baseline = None
         samples = []
         for elapsed, lux in zip(intervals, illuminance):
             if elapsed is None or not math.isfinite(elapsed) or (self.last is not None and elapsed <= self.last):
@@ -90,8 +92,13 @@ class LightClient:
                 continue
             anchor_elapsed, anchor_system = starts[index]
             epoch = anchor_system + (elapsed - anchor_elapsed)
+            sample = (epoch, elapsed, lux)
             if epoch >= self.armed_at - 2.0:
-                samples.append((epoch, elapsed, lux))
+                samples.append(sample)
+            elif first_batch:
+                baseline = sample
+        if baseline is not None:
+            samples.insert(0, baseline)
         return status, samples
 
 
