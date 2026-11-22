@@ -4,10 +4,12 @@ import hashlib
 import struct
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from dashboard import ble, ble_stream, flash
 from dashboard.hubble_ble import hubble_identities, match_hubble
+from dashboard.phyphox import LightClient, local_phone_url
 
 
 class BenchTests(unittest.TestCase):
@@ -79,6 +81,25 @@ class BenchTests(unittest.TestCase):
         self.assertIsNone(ble_stream.interval_between(12, 11))
         self.assertEqual(3.125, ble_stream.interval_between(12, 15.125))
         self.assertEqual("·▁·█", ble_stream.graph([(2.5, 0), (10, 10)], 0, 10, 4, 0, 10))
+
+    def test_phyphox_maps_samples_to_phone_wall_time_across_resume(self):
+        client = LightClient("http://192.168.1.15:8080")
+        client.armed_at = 1005
+        anchors = [
+            {"event": "START", "experimentTime": 0.0, "systemTime": 1000.0},
+            {"event": "PAUSE", "experimentTime": 10.0, "systemTime": 1010.0},
+            {"event": "START", "experimentTime": 10.0, "systemTime": 1020.0},
+        ]
+        data = {"status": {"measuring": True}, "buffer": {
+            "illum_time": {"buffer": [9.5, 10.125]},
+            "illum": {"buffer": [550, 1700]},
+        }}
+        with patch.object(client, "get", side_effect=[anchors, data, anchors, data]) as get:
+            self.assertEqual(("Measuring", [(1009.5, 9.5, 550), (1020.125, 10.125, 1700)]), client.poll())
+            self.assertEqual(("Measuring", []), client.poll())
+            self.assertEqual({"illum_time": "10.125", "illum": "10.125|illum_time"}, get.call_args.args[1])
+        with self.assertRaises(ValueError):
+            local_phone_url("http://example.org:8080")
 
     def test_hubble_requires_an_authenticated_matching_advertisement(self):
         (self.keys / "hagalu_002.hubble.key").write_text(

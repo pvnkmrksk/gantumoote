@@ -279,6 +279,20 @@ can extend the observed interval. The screen refreshes once per second and `--wi
 line per advert when piped or run with `--plain`. For a familiar shell command
 on this Pi, link `dashboard/pi/gantu-ble` into `~/.local/bin/`.
 
+For a phone with an ambient light sensor exposed to Phyphox, open **Light**, enable remote access,
+and press Start. Use the URL shown by the app while the Pi and phone are on the same local network:
+
+```sh
+dashboard/pi/gantu-ble -d h03 h04 --record --phyphox http://192.168.1.42:8080
+```
+
+The terminal adds a lux plot on the same time window. Recording creates a sibling `.lux.tsv` beside the
+BLE TSV with the same absolute timestamp format. The Pi uses the experiment’s clock references to
+timestamp lux samples, so network polling delays do not shift their recorded times. Use automatic
+date and time on both devices. Phyphox’s built-in Light experiment requires Android hardware that
+exposes an ambient light sensor. [Light experiment](https://phyphox.org/experiment/light/).
+[Phyphox time reference](https://phyphox.org/docs/remote-interface/#time).
+
 The BLE monitor uses BlueZ on `hci0`. It matches Find My manufacturer data and authenticates Hubble v2
 advertisements using the matching `.keys` and `.hubble.key` files in `dashboard/data/secrets/tag-keys/`. It saves only registered tags and updates the dashboard every
 10 seconds. Download a CSV of the last 24 hours of received advertisements, grouped by tag and UTC minute. Hubble network

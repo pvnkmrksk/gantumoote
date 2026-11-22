@@ -13,7 +13,7 @@ import tempfile
 import textwrap
 import time
 from collections import deque
-from contextlib import closing
+from contextlib import closing, nullcontext
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -21,6 +21,7 @@ from statistics import median
 
 from . import ble
 from .flash import NETWORK, TAG, read_json, records
+from .phyphox import LightClient, LightFeed, timestamp
 from .settings import DATA, REGISTRY
 
 SHORT_TAG = re.compile(r"([hi])0*([0-9]+)", re.IGNORECASE)
@@ -181,6 +182,16 @@ def draw(selected, history, received_counts, log_path, window, light_lines=None)
     sys.stdout.flush()
 
 
+def draw_light(feed, start, now, width):
+    status, samples = feed.snapshot()
+    value = f"{samples[-1][2]:,.1f} lx" if samples else "—"
+    observed = datetime.fromtimestamp(samples[-1][0]).strftime("%H:%M:%S.%f")[:-3] if samples else ""
+    points = [(epoch, lux) for epoch, _, lux in samples if start <= epoch <= now]
+    scale = metric_scale([lux for _, lux in points], 100.0, "illuminance")
+    title = f"Phone light   {value}   {observed}   ·   {status}"
+    return ["", title[:width], graph(points, start, now, width, *scale)]
+
+
 def create_recording(directory, selected):
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     names = "-".join(short_name(tag) for tag in selected)
@@ -197,10 +208,15 @@ def main():
     parser.add_argument("--plain", action="store_true", help="one line per advert, suitable for a file or pipe")
     parser.add_argument("--record", action="store_true", help="save selected adverts privately in ~/blelog on the Pi")
     parser.add_argument("--window", type=int, default=120, help="seconds shown in the live plots (default: 120)")
+    parser.add_argument("--phyphox", metavar="URL", help="show and log the phone’s live Phyphox Light readings")
     parser.add_argument("--adapter", default="hci0")
     args = parser.parse_args()
     if not 15 <= args.window <= 3600:
         parser.error("--window must be between 15 and 3600 seconds")
+    try:
+        client = LightClient(args.phyphox) if args.phyphox else None
+    except ValueError as error:
+        parser.error(str(error))
     tags = inventory(DATA)
     if args.list:
         for tag, entry in tags.items():
@@ -225,6 +241,9 @@ def main():
         if plain:
             print(f"Recording to {log_path} on the Pi", file=sys.stderr)
 
+    light_path = log_path.with_suffix(".lux.tsv") if client and log_path else None
+    light = LightFeed(client, light_path, plain=plain) if client else None
+
     def packet(tag, network, epoch, rssi, raw, payload):
         if tag not in selected:
             return
@@ -232,7 +251,7 @@ def main():
         interval = interval_between(previous.get((tag, network)), epoch)
         previous[tag, network] = epoch
         if plain or writer is not None:
-            observed = datetime.fromtimestamp(epoch).astimezone().isoformat(timespec="milliseconds")
+            observed = timestamp(epoch)
         if writer is not None:
             writer.writerow((observed, short_name(tag), network, rssi, temp, raw.hex().upper(),
                              f"{interval:.3f}" if interval is not None else ""))
@@ -246,19 +265,23 @@ def main():
             received_counts[tag] += 1
 
     def refresh():
-        draw(selected, history, received_counts, log_path, args.window)
+        render_light = (lambda start, now, width: draw_light(light, start, now, width)) if light else None
+        draw(selected, history, received_counts, log_path, args.window, render_light)
 
     if plain:
         print(f"Watching {', '.join(selected)}", file=sys.stderr)
     if not plain:
         sys.stdout.write("\x1b[?25l")
     try:
-        ble.scan(args.adapter, packet, on_tick=None if plain else refresh, refresh_seconds=1)
+        with light if light else nullcontext():
+            ble.scan(args.adapter, packet, on_tick=None if plain else refresh, refresh_seconds=1)
     finally:
         if log_file is not None:
             log_file.close()
         if not plain:
             print("\x1b[?25h" + (f"\nSaved on the Pi at {log_path}" if log_path else ""))
+            if light_path:
+                print(f"Phone log: {light_path}")
 
 
 if __name__ == "__main__":
