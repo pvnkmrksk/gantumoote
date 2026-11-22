@@ -55,7 +55,7 @@ def hubble_identities(directory):
     return identities
 
 
-def match_hubble(identities, data):
+def authenticate_hubble(identities, data):
     if len(data) < 15 or data[0] >> 2 != 2:
         return None
     for tag, key, counter in identities.get(data[3:11], ()):
@@ -64,5 +64,19 @@ def match_hubble(identities, data):
         message = eax_mac(key, 2, data[11:-4])
         expected = bytes(a ^ b ^ c for a, b, c in zip(nonce[:4], header[:4], message[:4]))
         if hmac.compare_digest(expected, data[-4:]):
-            return tag
+            return tag, key, nonce
+    return None
+
+
+def match_hubble(identities, data):
+    matched = authenticate_hubble(identities, data)
+    return matched[0] if matched else None
+
+
+def decode_hubble(identities, data):
+    matched = authenticate_hubble(identities, data)
+    if matched:
+        tag, key, nonce = matched
+        cipher = Cipher(algorithms.AES(key), modes.CTR(nonce)).decryptor()
+        return tag, cipher.update(data[11:-4]) + cipher.finalize()
     return None

@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from dashboard import ble, flash
+from dashboard import ble, ble_stream, flash
 from dashboard.hubble_ble import hubble_identities, match_hubble
 
 
@@ -65,6 +65,14 @@ class BenchTests(unittest.TestCase):
         self.assertEqual(2, tag["reports"])
         self.assertEqual(-63, tag["rssi"])
         self.assertEqual(42, tag["status_byte"])
+
+    def test_stream_tag_alias_and_signed_temperature(self):
+        self.assertEqual("Hagalu-003", ble_stream.resolve("h03"))
+        self.assertEqual("Hagalu-004", ble_stream.resolve("hagalu_004"))
+        self.assertEqual("Irulu-012", ble_stream.resolve("i12"))
+        self.assertEqual("h03", ble_stream.short_name("Hagalu-003"))
+        self.assertEqual(-1.5, ble_stream.temperature({"findmy_temp": True}, "findmy", b"\x12\x19\xfd"))
+        self.assertIsNone(ble_stream.temperature({}, "findmy", b"\x12\x19\x00"))
 
     def test_hubble_requires_an_authenticated_matching_advertisement(self):
         (self.keys / "hagalu_002.hubble.key").write_text(

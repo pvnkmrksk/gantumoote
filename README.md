@@ -261,9 +261,20 @@ Start the receiver on Raspberry Pi OS from the checkout:
 sudo apt install bluez python3-cryptography python3-dbus python3-gi
 dashboard/pi/install-ble.sh
 systemctl status gantumoote-ble --no-pager
-journalctl -u gantumoote-ble -n 25 --no-pager
+sudo journalctl -u gantumoote-ble -n 25 --no-pager
 /usr/bin/python3 -m dashboard.ble capture ~/blelog/burn.btsnoop
 ```
+
+Stream directly in a Pi terminal:
+
+```sh
+dashboard/pi/gantu-ble -l
+dashboard/pi/gantu-ble -d h03 h04
+```
+
+The terminal shows the latest raw advertising data field, RSSI and decoded temperature per selected tag.
+It prints one timestamped line per advert when piped or run with `--plain`. For a familiar shell command
+on this Pi, link `dashboard/pi/gantu-ble` into `~/.local/bin/`.
 
 The BLE monitor uses BlueZ on `hci0`. It matches Find My manufacturer data and authenticates Hubble v2
 advertisements using the matching `.keys` and `.hubble.key` files in `dashboard/data/secrets/tag-keys/`. It saves only registered tags and updates the dashboard every

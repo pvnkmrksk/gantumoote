@@ -13,7 +13,7 @@ from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .hubble_ble import hubble_identities, match_hubble
+from .hubble_ble import decode_hubble, hubble_identities, match_hubble
 from .settings import DATA, write_private
 
 SNOOP_HEADER = b"btsnoop\x00" + struct.pack(">II", 1, 2001)
@@ -98,7 +98,7 @@ def heard(stats, tag, epoch, rssi, status_byte):
         "first_seen": previous.get("first_seen", stamp(epoch)),
         "last_seen": stamp(epoch),
         "reports": previous.get("reports", 0) + 1,
-        "rssi": rssi if -127 <= rssi <= 20 else None,
+        "rssi": rssi if rssi is not None and -127 <= rssi <= 20 else None,
         "status_byte": status_byte,
     }
 
@@ -164,7 +164,8 @@ def reception_history(root, since):
             WHERE minute >= ? ORDER BY minute DESC, tag""", (since,)).fetchall()
 
 
-def monitor(adapter):
+def scan(adapter, on_packet, *, on_tick=None, refresh_seconds=10):
+    """Watch matching advertisements from this BlueZ discovery session."""
     import dbus
     from dbus.mainloop.glib import DBusGMainLoop
     from gi.repository import GLib
@@ -175,10 +176,7 @@ def monitor(adapter):
     scanner = dbus.Interface(bus.get_object("org.bluez", adapter_path), "org.bluez.Adapter1")
     findmy = findmy_addresses(KEYS)
     hubble = hubble_identities(KEYS)
-    stats = {}
-    pending = {}
     stopping = False
-    started = stamp(time.time())
     loop = GLib.MainLoop()
 
     def received(properties, path):
@@ -193,10 +191,16 @@ def monitor(adapter):
                 address = bytes.fromhex(address_part.replace("_", ""))
             except ValueError:
                 return
-            if tag := match_findmy(findmy, address, bytes(apple)):
-                matches.append((tag, apple[2]))
-        if service is not None and (tag := match_hubble(hubble, bytes(service))):
-            matches.append((tag, None))
+            apple = bytes(apple)
+            if tag := match_findmy(findmy, address, apple):
+                raw = bytes((len(apple) + 3, 0xFF, 0x4C, 0x00)) + apple
+                matches.append((tag, "findmy", raw, apple))
+        if service is not None:
+            service = bytes(service)
+            if decoded := decode_hubble(hubble, service):
+                tag, payload = decoded
+                raw = bytes((len(service) + 3, 0x16, 0xA6, 0xFC)) + service
+                matches.append((tag, "hubble", raw, payload))
         if not matches:
             return
         rssi = properties.get("RSSI")
@@ -207,10 +211,9 @@ def monitor(adapter):
             except dbus.DBusException:
                 rssi = 127
         now = time.time()
-        minute = stamp(now)[:16]
-        for tag, status_byte in matches:
-            heard(stats, tag, now, int(rssi), status_byte)
-            heard(pending, (tag, minute), now, int(rssi), status_byte)
+        rssi = int(rssi)
+        for tag, network, raw, payload in matches:
+            on_packet(tag, network, now, rssi if -127 <= rssi <= 20 else None, raw, payload)
 
     def changed(interface, properties, _invalidated, path):
         if interface == "org.bluez.Device1":
@@ -218,16 +221,6 @@ def monitor(adapter):
 
     def added(path, interfaces):
         received(interfaces.get("org.bluez.Device1", {}), path)
-
-    def publish():
-        nonlocal findmy, hubble
-        findmy = findmy_addresses(KEYS)
-        hubble = hubble_identities(KEYS)
-        log_receptions(DATA, pending)
-        write_private(STATUS, json.dumps({
-            "started_at": started, "updated_at": stamp(time.time()), "tags": stats,
-        }, sort_keys=True).encode())
-        return True
 
     def discovery_changed(interface, properties, _invalidated, path):
         if path == adapter_path and interface == "org.bluez.Adapter1" and "Discovering" in properties and not properties["Discovering"]:
@@ -240,11 +233,19 @@ def monitor(adapter):
     bus.add_signal_receiver(added, "InterfacesAdded", "org.freedesktop.DBus.ObjectManager", bus_name="org.bluez")
     bus.watch_name_owner("org.bluez", lambda owner: None if owner else loop.quit())
     scanner.SetDiscoveryFilter({"Transport": "le", "DuplicateData": dbus.Boolean(True)})
+
+    def update_keys():
+        nonlocal findmy, hubble
+        findmy = findmy_addresses(KEYS)
+        hubble = hubble_identities(KEYS)
+        return True
+
     def tick():
         try:
-            return publish()
+            on_tick()
+            return True
         except (OSError, sqlite3.Error):
-            logging.exception("Could not save BLE receptions")
+            logging.exception("Could not update BLE output")
             loop.quit()
             return False
 
@@ -257,16 +258,42 @@ def monitor(adapter):
     GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGTERM, stop)
     GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGINT, stop)
     scanner.StartDiscovery()
-    publish()
-    GLib.timeout_add_seconds(10, tick)
-    loop.run()
-    if not stopping:
-        raise SystemExit("BlueZ discovery stopped")
-    log_receptions(DATA, pending)
     try:
-        scanner.StopDiscovery()
-    except dbus.DBusException:
-        pass
+        if on_tick:
+            on_tick()
+            GLib.timeout_add_seconds(refresh_seconds, tick)
+        GLib.timeout_add_seconds(10, update_keys)
+        loop.run()
+        if not stopping:
+            raise SystemExit("BlueZ discovery stopped")
+    finally:
+        try:
+            scanner.StopDiscovery()
+        except dbus.DBusException:
+            pass
+
+
+def monitor(adapter):
+    stats = {}
+    pending = {}
+    started = stamp(time.time())
+
+    def packet(tag, network, epoch, rssi, _raw, payload):
+        minute = stamp(epoch)[:16]
+        status_byte = payload[2] if network == "findmy" else None
+        heard(stats, tag, epoch, rssi, status_byte)
+        heard(pending, (tag, minute), epoch, rssi, status_byte)
+
+    def publish():
+        log_receptions(DATA, pending)
+        write_private(STATUS, json.dumps({
+            "started_at": started, "updated_at": stamp(time.time()), "tags": stats,
+        }, sort_keys=True).encode())
+
+    try:
+        scan(adapter, packet, on_tick=publish)
+    finally:
+        log_receptions(DATA, pending)
 
 
 def main():
