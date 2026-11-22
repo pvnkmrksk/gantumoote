@@ -269,11 +269,12 @@ Stream directly in a Pi terminal:
 
 ```sh
 dashboard/pi/gantu-ble -l
-dashboard/pi/gantu-ble -d h03 h04
+dashboard/pi/gantu-ble -d h03 h04 --record
 ```
 
 The terminal shows the latest raw advertising data field, RSSI and decoded temperature per selected tag.
-It prints one timestamped line per advert when piped or run with `--plain`. For a familiar shell command
+`--record` saves each matching advert to a private TSV in `~/blelog` on the Pi. The terminal prints one
+line per advert when piped or run with `--plain`. For a familiar shell command
 on this Pi, link `dashboard/pi/gantu-ble` into `~/.local/bin/`.
 
 The BLE monitor uses BlueZ on `hci0`. It matches Find My manufacturer data and authenticates Hubble v2

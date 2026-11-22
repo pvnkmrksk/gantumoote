@@ -2,15 +2,19 @@
 """List the Pi's known tags or stream their BLE advertisements."""
 
 import argparse
+import csv
 import json
+import os
 import re
 import shutil
 import sqlite3
 import sys
+import tempfile
 import textwrap
 import time
 from contextlib import closing
 from datetime import datetime
+from pathlib import Path
 
 from . import ble
 from .flash import NETWORK, TAG, read_json, records
@@ -72,7 +76,7 @@ def details(rssi, temp):
                        f"Temp {temp:g} °C" if temp is not None else "Temp —"))
 
 
-def draw(selected, latest):
+def draw(selected, latest, log_path):
     screen, _ = shutil.get_terminal_size((120, 25))
     side_by_side = screen >= 34 * len(selected)
     width = (screen - 1 - 3 * (len(selected) - 1)) // len(selected) if side_by_side else max(3, screen - 1)
@@ -95,8 +99,17 @@ def draw(selected, latest):
                 for index in range(max(map(len, columns)))]
     else:
         rows = [line for column in columns for line in (*column, "")]
-    sys.stdout.write("\x1b[H\x1b[J" + "\n".join(rows) + "\n\nCtrl-C to stop\n")
+    footer = f"Recording to {log_path} on the Pi\n" if log_path else ""
+    sys.stdout.write("\x1b[H\x1b[J" + "\n".join(rows) + "\n\n" + footer + "Ctrl-C to stop\n")
     sys.stdout.flush()
+
+
+def create_recording(directory, selected):
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    names = "-".join(short_name(tag) for tag in selected)
+    date = datetime.now().strftime("%Y%m%d_%H%M%S")
+    fd, path = tempfile.mkstemp(prefix=f"{names}-{date}-", suffix=".tsv", dir=directory)
+    return os.fdopen(fd, "w", encoding="utf-8", newline=""), Path(path)
 
 
 def main():
@@ -105,6 +118,7 @@ def main():
     mode.add_argument("-l", "--list", action="store_true", help="list known tags and their short names")
     mode.add_argument("-d", "--devices", nargs="+", metavar="TAG", help="stream tag names, e.g. -d h03 h04")
     parser.add_argument("--plain", action="store_true", help="one line per advert, suitable for a file or pipe")
+    parser.add_argument("--record", action="store_true", help="save selected adverts privately in ~/blelog on the Pi")
     parser.add_argument("--adapter", default="hci0")
     args = parser.parse_args()
     tags = inventory(DATA)
@@ -120,29 +134,43 @@ def main():
         parser.error(f"unknown tags: {', '.join(unknown)}. Use -l to list your tags.")
     latest = {}
     plain = args.plain or not sys.stdout.isatty()
+    log_file = log_path = writer = None
+    if args.record:
+        log_file, log_path = create_recording(Path.home() / "blelog", selected)
+        writer = csv.writer(log_file, delimiter="\t")
+        writer.writerow(("timestamp", "tag", "network", "rssi_dbm", "temp_c", "raw_ad_hex"))
+        log_file.flush()
+        if plain:
+            print(f"Recording to {log_path} on the Pi", file=sys.stderr)
 
     def packet(tag, network, epoch, rssi, raw, payload):
         if tag not in selected:
             return
         temp = temperature(tags[tag], network, payload)
-        if plain:
+        if plain or writer is not None:
             observed = datetime.fromtimestamp(epoch).astimezone().isoformat(timespec="milliseconds")
+        if writer is not None:
+            writer.writerow((observed, short_name(tag), network, rssi, temp, raw.hex().upper()))
+            log_file.flush()
+        if plain:
             print(f"{observed}  {short_name(tag)}  {NETWORK[network]}  {details(rssi, temp)}  "
                   f"raw={raw.hex().upper()}", flush=True)
         else:
             latest[tag] = (network, epoch, rssi, raw, temp)
-            draw(selected, latest)
+            draw(selected, latest, log_path)
 
     def refresh():
-        draw(selected, latest)
+        draw(selected, latest, log_path)
 
     if plain:
         print(f"Watching {', '.join(selected)}", file=sys.stderr)
     try:
         ble.scan(args.adapter, packet, on_tick=None if plain else refresh, refresh_seconds=1)
     finally:
+        if log_file is not None:
+            log_file.close()
         if not plain:
-            print()
+            print(f"Saved on the Pi at {log_path}" if log_path else "")
 
 
 if __name__ == "__main__":
