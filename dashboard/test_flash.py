@@ -74,6 +74,12 @@ class BenchTests(unittest.TestCase):
         self.assertEqual(-1.5, ble_stream.temperature({"findmy_temp": True}, "findmy", b"\x12\x19\xfd"))
         self.assertIsNone(ble_stream.temperature({}, "findmy", b"\x12\x19\x00"))
 
+    def test_received_interval_and_shared_time_buckets(self):
+        self.assertIsNone(ble_stream.interval_between(None, 12))
+        self.assertIsNone(ble_stream.interval_between(12, 11))
+        self.assertEqual(3.125, ble_stream.interval_between(12, 15.125))
+        self.assertEqual("·▁·█", ble_stream.graph([(2.5, 0), (10, 10)], 0, 10, 4, 0, 10))
+
     def test_hubble_requires_an_authenticated_matching_advertisement(self):
         (self.keys / "hagalu_002.hubble.key").write_text(
             "key_hex: 000102030405060708090a0b0c0d0e0f\nperiod_exponent: 15\n"

@@ -272,8 +272,10 @@ dashboard/pi/gantu-ble -l
 dashboard/pi/gantu-ble -d h03 h04 --record
 ```
 
-The terminal shows the latest raw advertising data field, RSSI and decoded temperature per selected tag.
-`--record` saves each matching advert to a private TSV in `~/blelog` on the Pi. The terminal prints one
+The terminal plots the rolling interval between received adverts, RSSI and temperature side by side,
+with each tag’s latest raw advert below. The interval is measured per tag and network. A missed advert
+can extend the observed interval. The screen refreshes once per second and `--window` sets the plot span.
+`--record` saves each matching advert and its received interval to a private TSV in `~/blelog` on the Pi. The terminal prints one
 line per advert when piped or run with `--plain`. For a familiar shell command
 on this Pi, link `dashboard/pi/gantu-ble` into `~/.local/bin/`.
 

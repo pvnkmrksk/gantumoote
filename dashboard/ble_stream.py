@@ -12,9 +12,12 @@ import sys
 import tempfile
 import textwrap
 import time
+from collections import deque
 from contextlib import closing
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from statistics import median
 
 from . import ble
 from .flash import NETWORK, TAG, read_json, records
@@ -71,36 +74,110 @@ def temperature(entry, network, payload):
     return None
 
 
-def details(rssi, temp):
-    return " · ".join((f"RSSI {rssi} dBm" if rssi is not None else "RSSI —",
-                       f"Temp {temp:g} °C" if temp is not None else "Temp —"))
+@dataclass(frozen=True)
+class Sample:
+    network: str
+    epoch: float
+    interval: float | None
+    rssi: int | None
+    temp: float | None
+    raw: bytes
 
 
-def draw(selected, latest, log_path):
-    screen, _ = shutil.get_terminal_size((120, 25))
+def interval_between(previous, current):
+    if previous is not None and current >= previous:
+        return current - previous
+    return None
+
+
+def value_text(value, unit, decimals):
+    return "—" if value is None else f"{value:.{decimals}f} {unit}"
+
+
+METRICS = (
+    ("interval", "Interval", "s", 3, 10.0, "33"),
+    ("rssi", "RSSI", "dBm", 0, 15.0, "36"),
+    ("temp", "Temp", "°C", 1, 4.0, "35"),
+)
+
+
+def graph(points, start, now, width, lo, hi):
+    """Render the most recent reading in each shared time bucket."""
+    cells = ["·"] * width
+    for epoch, value in points:
+        if start <= epoch <= now and value is not None:
+            column = min(width - 1, int((epoch - start) / (now - start) * width))
+            level = int(max(0, min(7, round(7 * (value - lo) / (hi - lo)))))
+            cells[column] = "▁▂▃▄▅▆▇█"[level]
+    return "".join(cells)
+
+
+def metric_scale(values, min_span, name):
+    if name == "interval":
+        return 0.0, max([min_span, *values])
+    if not values:
+        return 0.0, min_span
+    lo, hi = min(values), max(values)
+    padding = max(min_span - (hi - lo), 0.0) / 2
+    return lo - padding, hi + padding
+
+
+def draw(selected, history, received_counts, log_path, window, light_lines=None):
+    now = time.time()
+    start = now - window
+    screen, height = shutil.get_terminal_size((120, 25))
     side_by_side = screen >= 34 * len(selected)
     width = (screen - 1 - 3 * (len(selected) - 1)) // len(selected) if side_by_side else max(3, screen - 1)
+    recent = {tag: [sample for sample in history[tag] if sample.epoch >= start] for tag in selected}
+    scale = {}
+    for name, _, _, _, min_span, _ in METRICS:
+        values = [getattr(sample, name) for samples in recent.values() for sample in samples]
+        scale[name] = metric_scale([x for x in values if x is not None], min_span, name)
+
     columns = []
     for tag in selected:
-        title = f"{short_name(tag)}  {tag}"
-        if tag not in latest:
-            lines = [title, "Waiting for a BLE advert"]
+        latest = history[tag][-1] if history[tag] else None
+        lines = [(f"{short_name(tag)}  {tag}", "1")]
+        if latest:
+            observed = datetime.fromtimestamp(latest.epoch).strftime("%H:%M:%S.%f")[:-3]
+            age = max(0, int(now - latest.epoch))
+            lines.append((f"{observed}  {age}s ago  ·  {received_counts[tag]} heard", ""))
         else:
-            network, epoch, rssi, raw, temp = latest[tag]
-            observed = datetime.fromtimestamp(epoch).strftime("%H:%M:%S.%f")[:-3]
-            age = max(0, int(time.time() - epoch))
-            lines = [title, f"{observed}  ({age}s ago)", details(rssi, temp),
-                     f"{NETWORK[network]} raw AD · {len(raw)} B"]
-            lines += textwrap.wrap(raw.hex(" ").upper(), width=width, break_long_words=False)
+            lines.append(("Waiting for a BLE advert", ""))
+        for name, label, unit, decimals, _, color in METRICS:
+            value = getattr(latest, name) if latest else None
+            title = f"{label:<8} {value_text(value, unit, decimals)}"
+            points = [(sample.epoch, getattr(sample, name)) for sample in recent[tag]]
+            intervals = [val for _, val in points if val is not None]
+            if name == "interval" and intervals:
+                title += f"  med {median(intervals):.2f}s"
+            lines.append((title, color))
+            lines.append((graph(points, start, now, width, *scale[name]), color))
+        if latest:
+            lines.append((f"{NETWORK[latest.network]} raw AD · {len(latest.raw)} B", "2"))
+            lines.extend((row, "2") for row in textwrap.wrap(latest.raw.hex(" ").upper(), width=width,
+                                                            break_long_words=False))
         columns.append(lines)
+
+    def format_cell(cell, pad=None):
+        value, style = cell
+        value = value[:width].ljust(pad) if pad else value[:width]
+        return f"\x1b[{style}m{value}\x1b[0m" if style and "NO_COLOR" not in os.environ else value
+
     if side_by_side:
-        rows = [" │ ".join((column[index] if index < len(column) else "")[:width].ljust(width)
-                           for column in columns).rstrip()
-                for index in range(max(map(len, columns)))]
+        rows = [" │ ".join(format_cell(column[i] if i < len(column) else ("", ""), width)
+                           for column in columns)
+                for i in range(max(map(len, columns)))]
     else:
-        rows = [line for column in columns for line in (*column, "")]
-    footer = f"Recording to {log_path} on the Pi\n" if log_path else ""
-    sys.stdout.write("\x1b[H\x1b[J" + "\n".join(rows) + "\n\n" + footer + "Ctrl-C to stop\n")
+        rows = [format_cell(item) for column in columns for item in (*column, ("", ""))]
+    heading = f"GANTU BLE   ·   last {window}s → now   ·   {datetime.fromtimestamp(now):%H:%M:%S}"
+    footer = ["Ctrl-C to stop"]
+    if log_path:
+        footer.insert(0, f"Pi log: ~/blelog/{log_path.name}")
+    light = light_lines(start, now, max(3, screen - 1)) if light_lines else []
+    available = max(1, height - 2 - len(footer) - len(light))
+    display = [heading[:screen - 1], "", *rows[:available], *light, *footer]
+    sys.stdout.write("\x1b[H" + "\n".join(line + "\x1b[K" for line in display) + "\x1b[J")
     sys.stdout.flush()
 
 
@@ -119,8 +196,11 @@ def main():
     mode.add_argument("-d", "--devices", nargs="+", metavar="TAG", help="stream tag names, e.g. -d h03 h04")
     parser.add_argument("--plain", action="store_true", help="one line per advert, suitable for a file or pipe")
     parser.add_argument("--record", action="store_true", help="save selected adverts privately in ~/blelog on the Pi")
+    parser.add_argument("--window", type=int, default=120, help="seconds shown in the live plots (default: 120)")
     parser.add_argument("--adapter", default="hci0")
     args = parser.parse_args()
+    if not 15 <= args.window <= 3600:
+        parser.error("--window must be between 15 and 3600 seconds")
     tags = inventory(DATA)
     if args.list:
         for tag, entry in tags.items():
@@ -132,13 +212,15 @@ def main():
     unknown = [name for name in selected if name not in tags]
     if unknown:
         parser.error(f"unknown tags: {', '.join(unknown)}. Use -l to list your tags.")
-    latest = {}
-    plain = args.plain or not sys.stdout.isatty()
+    history = {tag: deque(maxlen=4096) for tag in selected}
+    received_counts = dict.fromkeys(selected, 0)
+    previous = {}
+    plain = args.plain or not sys.stdout.isatty() or os.environ.get("TERM") == "dumb"
     log_file = log_path = writer = None
     if args.record:
         log_file, log_path = create_recording(Path.home() / "blelog", selected)
         writer = csv.writer(log_file, delimiter="\t")
-        writer.writerow(("timestamp", "tag", "network", "rssi_dbm", "temp_c", "raw_ad_hex"))
+        writer.writerow(("timestamp", "tag", "network", "rssi_dbm", "temp_c", "raw_ad_hex", "interval_s"))
         log_file.flush()
         if plain:
             print(f"Recording to {log_path} on the Pi", file=sys.stderr)
@@ -147,30 +229,36 @@ def main():
         if tag not in selected:
             return
         temp = temperature(tags[tag], network, payload)
+        interval = interval_between(previous.get((tag, network)), epoch)
+        previous[tag, network] = epoch
         if plain or writer is not None:
             observed = datetime.fromtimestamp(epoch).astimezone().isoformat(timespec="milliseconds")
         if writer is not None:
-            writer.writerow((observed, short_name(tag), network, rssi, temp, raw.hex().upper()))
+            writer.writerow((observed, short_name(tag), network, rssi, temp, raw.hex().upper(),
+                             f"{interval:.3f}" if interval is not None else ""))
             log_file.flush()
         if plain:
-            print(f"{observed}  {short_name(tag)}  {NETWORK[network]}  {details(rssi, temp)}  "
-                  f"raw={raw.hex().upper()}", flush=True)
+            print(f"{observed}  {short_name(tag)}  {NETWORK[network]}  "
+                  f"interval {value_text(interval, 's', 3)}  RSSI {value_text(rssi, 'dBm', 0)}  "
+                  f"temp {value_text(temp, '°C', 1)}  raw={raw.hex().upper()}", flush=True)
         else:
-            latest[tag] = (network, epoch, rssi, raw, temp)
-            draw(selected, latest, log_path)
+            history[tag].append(Sample(network, epoch, interval, rssi, temp, raw))
+            received_counts[tag] += 1
 
     def refresh():
-        draw(selected, latest, log_path)
+        draw(selected, history, received_counts, log_path, args.window)
 
     if plain:
         print(f"Watching {', '.join(selected)}", file=sys.stderr)
+    if not plain:
+        sys.stdout.write("\x1b[?25l")
     try:
         ble.scan(args.adapter, packet, on_tick=None if plain else refresh, refresh_seconds=1)
     finally:
         if log_file is not None:
             log_file.close()
         if not plain:
-            print(f"Saved on the Pi at {log_path}" if log_path else "")
+            print("\x1b[?25h" + (f"\nSaved on the Pi at {log_path}" if log_path else ""))
 
 
 if __name__ == "__main__":
