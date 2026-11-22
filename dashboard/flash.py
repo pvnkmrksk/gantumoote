@@ -127,7 +127,8 @@ def link(name, label):
 def row(root, tag, entry, planned, seen, files):
     name = html.escape(tag)
     flashed = bool(entry)
-    configs = [p for p in files if p.suffix == ".cfg" and ".combo" not in p.name]
+    configs = [p for p in files if p.suffix == ".cfg"
+               and (".combo" not in p.name or p.name == planned.get("bench_config"))]
     config_name = entry.get("config_name")
     if flashed:
         configs = []
@@ -144,7 +145,7 @@ def row(root, tag, entry, planned, seen, files):
         detail = ""
         if seen.get("rssi") is not None:
             detail = f"{int(seen['rssi'])} dBm"
-        if entry.get("telemetry") == "findmy-temperature" and "status_byte" in seen:
+        if entry.get("telemetry") == "findmy-temperature" and seen.get("status_byte") is not None:
             status = int(seen["status_byte"])
             detail = " · ".join(filter(None, (detail, f"{(status if status < 128 else status - 256) / 2:g} °C")))
         if detail:
@@ -158,6 +159,8 @@ def row(root, tag, entry, planned, seen, files):
         program += f"<small>{details}</small>"
     else:
         program = "Prepared" if configs else "Awaiting config"
+        if planned.get("bench_config"):
+            program += "<small>RAM-tested · OTP unconfirmed</small>"
     board = entry.get("board", planned.get("board", "unknown"))
     network = NETWORK.get(entry.get("network", planned.get("network")), "—")
     files_html = "<br>".join(links + keys) or "—"
@@ -175,7 +178,7 @@ def page(root):
     for tag, _minute, count, last_seen, rssi, status_byte in reception_history(root, since):
         if tag not in seen:
             seen[tag] = {"last_seen": last_seen, "reports": count, "rssi": rssi, "status_byte": status_byte}
-    for capture in reversed(captures):
+    for capture in sorted(captures, key=lambda item: item["ended_at"] or "", reverse=True):
         for tag, item in capture["tags"].items():
             if tag not in seen:
                 seen[tag] = item
@@ -190,7 +193,8 @@ def page(root):
         matches = ", ".join(f"{html.escape(tag)} ({int(item['reports'])})" for tag, item in capture["tags"].items())
         capture_rows.append(f"<li><strong>{html.escape(capture['file'])}</strong><small>"
                             f"{local_time(capture['started_at'])} to {local_time(capture['ended_at'])} · "
-                            f"{matches or 'No registered tags matched'}</small></li>")
+                            f"{matches or 'No registered tags matched'}</small>"
+                            f"<small>{html.escape(capture.get('note', ''))}</small></li>")
     table = ('<div class="table-wrap" role="region" aria-label="Flash records" tabindex="0"><table><thead><tr>'
              '<th scope="col">Tag</th><th scope="col">Board and network</th><th scope="col">Flash record</th>'
              '<th scope="col">Last Pi BLE reception</th><th scope="col">Private files</th></tr></thead>'

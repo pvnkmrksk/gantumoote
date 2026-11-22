@@ -258,15 +258,15 @@ Each config uses its own tag identity. Keep both the config and its key private.
 Start the receiver on Raspberry Pi OS from the checkout:
 
 ```sh
-sudo apt install bluez python3-dbus python3-gi
+sudo apt install bluez python3-cryptography python3-dbus python3-gi
 dashboard/pi/install-ble.sh
 systemctl status gantumoote-ble --no-pager
 journalctl -u gantumoote-ble -n 25 --no-pager
 /usr/bin/python3 -m dashboard.ble capture ~/blelog/burn.btsnoop
 ```
 
-The BLE monitor uses BlueZ on `hci0` and matches Find My manufacturer data against the advertisement
-keys in `dashboard/data/secrets/tag-keys/`. It saves only registered tags and updates the dashboard every
+The BLE monitor uses BlueZ on `hci0`. It matches Find My manufacturer data and authenticates Hubble v2
+advertisements using the matching `.keys` and `.hubble.key` files in `dashboard/data/secrets/tag-keys/`. It saves only registered tags and updates the dashboard every
 10 seconds. Download a CSV of the last 24 hours of received advertisements, grouped by tag and UTC minute. Hubble network
 reports still appear in the main dashboard. Old raw captures stay in the Pi's private `~/blelog`
 directory. The capture command reports their actual first and last packet timestamps.

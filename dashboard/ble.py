@@ -13,6 +13,7 @@ from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .hubble_ble import hubble_identities, match_hubble
 from .settings import DATA, write_private
 
 SNOOP_HEADER = b"btsnoop\x00" + struct.pack(">II", 1, 2001)
@@ -20,6 +21,7 @@ SNOOP_EPOCH = 0x00DCDDB30F2F8000
 KEYS = DATA / "secrets/tag-keys"
 STATUS = DATA / "ble-live.json"
 HISTORY = "ble-receptions.sqlite3"
+HUBBLE_UUID = "0000fca6-0000-1000-8000-00805f9b34fb"
 
 
 def stamp(epoch):
@@ -52,14 +54,16 @@ def match_findmy(identities, address, data):
         return identities.get((address, data[3:26]))
 
 
-def manufacturer_data(data):
+def findmy_and_hubble_data(data):
     offset = 0
     while offset < len(data) and data[offset]:
         end = offset + 1 + data[offset]
         if end > len(data):
             return
         if data[offset + 1:end].startswith(b"\xff\x4c\x00"):
-            yield data[offset + 4:end]
+            yield "findmy", data[offset + 4:end]
+        if data[offset + 1:end].startswith(b"\x16\xa6\xfc"):
+            yield "hubble", data[offset + 4:end]
         offset = end
 
 
@@ -83,24 +87,25 @@ def advertising_reports(packet):
             return
         rssi = int.from_bytes(packet[end:end + 1] if subevent == 2 else packet[offset + 13:offset + 14],
                               "little", signed=True)
-        for data in manufacturer_data(packet[offset + size:end]):
-            yield address, data, rssi
+        for network, data in findmy_and_hubble_data(packet[offset + size:end]):
+            yield network, address, data, rssi
         offset = next_offset
 
 
-def heard(stats, tag, epoch, rssi, data):
+def heard(stats, tag, epoch, rssi, status_byte):
     previous = stats.get(tag, {})
     stats[tag] = {
         "first_seen": previous.get("first_seen", stamp(epoch)),
         "last_seen": stamp(epoch),
         "reports": previous.get("reports", 0) + 1,
         "rssi": rssi if -127 <= rssi <= 20 else None,
-        "status_byte": data[2],
+        "status_byte": status_byte,
     }
 
 
 def analyze_capture(path, keys=KEYS):
-    identities = findmy_addresses(keys)
+    findmy = findmy_addresses(keys)
+    hubble = hubble_identities(keys)
     stats = {}
     started = ended = None
     with path.open("rb") as file:
@@ -120,9 +125,12 @@ def analyze_capture(path, keys=KEYS):
                 started = ended
             if flags & 0xFFFF != 3:
                 continue
-            for address, data, rssi in advertising_reports(packet):
-                if tag := match_findmy(identities, address, data):
-                    heard(stats, tag, ended, rssi, data)
+            for network, address, data, rssi in advertising_reports(packet):
+                if network == "findmy":
+                    if tag := match_findmy(findmy, address, data):
+                        heard(stats, tag, ended, rssi, data[2])
+                elif tag := match_hubble(hubble, data):
+                    heard(stats, tag, ended, rssi, None)
     return {
         "file": path.name,
         "started_at": stamp(started) if started is not None else None,
@@ -165,7 +173,8 @@ def monitor(adapter):
     bus = dbus.SystemBus()
     adapter_path = f"/org/bluez/{adapter}"
     scanner = dbus.Interface(bus.get_object("org.bluez", adapter_path), "org.bluez.Adapter1")
-    identities = findmy_addresses(KEYS)
+    findmy = findmy_addresses(KEYS)
+    hubble = hubble_identities(KEYS)
     stats = {}
     pending = {}
     stopping = False
@@ -173,25 +182,35 @@ def monitor(adapter):
     loop = GLib.MainLoop()
 
     def received(properties, path):
-        data = properties.get("ManufacturerData", {}).get(0x004C)
+        apple = properties.get("ManufacturerData", {}).get(0x004C)
+        service = properties.get("ServiceData", {}).get(HUBBLE_UUID)
         address_part = path.removeprefix(adapter_path + "/dev_")
-        if data is None or address_part == path:
+        if address_part == path or (apple is None and service is None):
             return
-        try:
-            address = bytes.fromhex(address_part.replace("_", ""))
-        except ValueError:
+        matches = []
+        if apple is not None:
+            try:
+                address = bytes.fromhex(address_part.replace("_", ""))
+            except ValueError:
+                return
+            if tag := match_findmy(findmy, address, bytes(apple)):
+                matches.append((tag, apple[2]))
+        if service is not None and (tag := match_hubble(hubble, bytes(service))):
+            matches.append((tag, None))
+        if not matches:
             return
-        if tag := match_findmy(identities, address, bytes(data)):
-            rssi = properties.get("RSSI")
-            if rssi is None:
-                device = bus.get_object("org.bluez", path)
-                try:
-                    rssi = device.Get("org.bluez.Device1", "RSSI", dbus_interface="org.freedesktop.DBus.Properties")
-                except dbus.DBusException:
-                    rssi = 127
-            now = time.time()
-            heard(stats, tag, now, int(rssi), bytes(data))
-            heard(pending, (tag, stamp(now)[:16]), now, int(rssi), bytes(data))
+        rssi = properties.get("RSSI")
+        if rssi is None:
+            device = bus.get_object("org.bluez", path)
+            try:
+                rssi = device.Get("org.bluez.Device1", "RSSI", dbus_interface="org.freedesktop.DBus.Properties")
+            except dbus.DBusException:
+                rssi = 127
+        now = time.time()
+        minute = stamp(now)[:16]
+        for tag, status_byte in matches:
+            heard(stats, tag, now, int(rssi), status_byte)
+            heard(pending, (tag, minute), now, int(rssi), status_byte)
 
     def changed(interface, properties, _invalidated, path):
         if interface == "org.bluez.Device1":
@@ -201,8 +220,9 @@ def monitor(adapter):
         received(interfaces.get("org.bluez.Device1", {}), path)
 
     def publish():
-        nonlocal identities
-        identities = findmy_addresses(KEYS)
+        nonlocal findmy, hubble
+        findmy = findmy_addresses(KEYS)
+        hubble = hubble_identities(KEYS)
         log_receptions(DATA, pending)
         write_private(STATUS, json.dumps({
             "started_at": started, "updated_at": stamp(time.time()), "tags": stats,

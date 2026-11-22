@@ -9,8 +9,8 @@ user=$(id -un)
     exit 1
 }
 case "$root" in *[!a-zA-Z0-9_./-]*) exit 1;; esac
-/usr/bin/python3 -c 'import dbus; from gi.repository import GLib' || {
-    echo 'Install python3-dbus and python3-gi.' >&2
+/usr/bin/python3 -c 'import cryptography, dbus; from gi.repository import GLib' || {
+    echo 'Install python3-cryptography, python3-dbus and python3-gi.' >&2
     exit 1
 }
 unit=$(mktemp)

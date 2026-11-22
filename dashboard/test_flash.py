@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 
 from dashboard import ble, flash
+from dashboard.hubble_ble import hubble_identities, match_hubble
 
 
 class BenchTests(unittest.TestCase):
@@ -64,6 +65,15 @@ class BenchTests(unittest.TestCase):
         self.assertEqual(2, tag["reports"])
         self.assertEqual(-63, tag["rssi"])
         self.assertEqual(42, tag["status_byte"])
+
+    def test_hubble_requires_an_authenticated_matching_advertisement(self):
+        (self.keys / "hagalu_002.hubble.key").write_text(
+            "key_hex: 000102030405060708090a0b0c0d0e0f\nperiod_exponent: 15\n"
+        )
+        identities = hubble_identities(self.keys)
+        advert = bytes.fromhex("08aa55f7a58a10e5dda9fdf0a857d81af51237")
+        self.assertEqual("Hagalu-002", match_hubble(identities, advert))
+        self.assertIsNone(match_hubble(identities, advert[:-1] + b"\x00"))
 
     def test_reception_counts_are_incremented_across_flushes(self):
         tag = "Hagalu-003"
