@@ -215,7 +215,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, flash.page(DATA), "text/html; charset=utf-8", {
                 "Content-Security-Policy": "default-src 'none'; style-src 'self'; base-uri 'none'; frame-ancestors 'none'",
             })
-        if path in (ble_day_web.PAGE, ble_day_web.IMAGE):
+        if path in (ble_day_web.PAGE, ble_day_web.IMAGE, ble_day_web.DIAGNOSTICS):
             today = date.today()
             try:
                 day, tags = ble_day_web.selection(url.query, today)
@@ -225,7 +225,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, ble_day_web.page(day, tags, today), "text/html; charset=utf-8",
                                  ble_day_web.PAGE_HEADERS)
             try:
-                png = ble_day_web.plot(day, tags)
+                png = ble_day_web.plot(day, tags, diagnostics=path == ble_day_web.DIAGNOSTICS)
             except (OSError, subprocess.SubprocessError):
                 return self.send(503, {"error": "The day plot is temporarily unavailable."},
                                  headers={"Retry-After": "30"})

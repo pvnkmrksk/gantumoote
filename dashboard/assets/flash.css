@@ -41,3 +41,6 @@ li { margin-block: .6rem; }
 .day-plot { margin: 1.25rem 0 0; }
 .day-plot img { display: block; width: 100%; height: auto; border: 1px solid var(--line); border-radius: .65rem; }
 .day-plot figcaption { margin-top: .75rem; }
+.day-diagnostics { margin-top: 1.65rem; border-top: 1px solid var(--line); padding-top: .75rem; }
+.day-diagnostics summary { color: var(--link); cursor: pointer; font-weight: 600; width: fit-content; }
+.day-diagnostics > p { color: var(--muted); font-size: .92rem; }

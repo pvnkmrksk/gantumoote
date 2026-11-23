@@ -17,6 +17,7 @@ from .settings import PROJECT
 
 PAGE = "/flash/ble-day"
 IMAGE = f"{PAGE}.png"
+DIAGNOSTICS = f"{PAGE}-diagnostics.png"
 CHART_HEADERS = {"Cross-Origin-Resource-Policy": "same-origin"}
 PAGE_HEADERS = {
     **CHART_HEADERS,
@@ -39,7 +40,9 @@ def selection(query, today):
 
 def page(day, tags, today):
     tag_value = " ".join(tags)
-    image = html.escape(f"{IMAGE}?{urlencode({'date': day.isoformat(), 'tags': tag_value})}", quote=True)
+    query = urlencode({"date": day.isoformat(), "tags": tag_value})
+    image = html.escape(f"{IMAGE}?{query}", quote=True)
+    diagnostics = html.escape(f"{DIAGNOSTICS}?{query}", quote=True)
     tag_value = html.escape(tag_value, quote=True)
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -56,11 +59,21 @@ def page(day, tags, today):
   <a href="{image}"><img src="{image}" alt="Daily BLE reception counts, exact packet gaps where available, RSSI, temperature, and Find My timestamps for {day}"></a>
   <figcaption><a href="{image}" download>Download PNG</a></figcaption>
 </figure>
+<details class="day-diagnostics">
+  <summary>Diagnostics</summary>
+  <p>Compare the Pi’s scan and recorder activity with Find My polling on the same timeline.
+  Older service activity comes from the Pi journal. Older Find My marks show when reports were saved.</p>
+  <figure class="day-plot">
+    <a href="{diagnostics}"><img src="{diagnostics}" loading="lazy" decoding="async"
+      alt="Pi monitor and recorder uptime, Find My poll attempts and results, and older saved reports for {day}"></a>
+    <figcaption><a href="{diagnostics}" download>Download diagnostics PNG</a></figcaption>
+  </figure>
+</details>
 </main></body></html>"""
 
 
-def plot(day, tags):
-    path = day_plot_path(Path.home() / "blelog", day, tags)
+def plot(day, tags, *, diagnostics=False):
+    path = day_plot_path(Path.home() / "blelog", day, tags, diagnostics=diagnostics)
 
     def fresh():
         try:
@@ -76,6 +89,8 @@ def plot(day, tags):
         if not fresh():
             # The Pi installs Matplotlib in its system Python for the BLE tools.
             command = ["/usr/bin/python3", "-m", "dashboard.ble_stream", "--plot-day", day.isoformat()]
+            if diagnostics:
+                command.append("--diagnostics")
             if tags:
                 command.extend(("--tags", *tags))
             subprocess.run(command, cwd=PROJECT, check=True, timeout=30, stdout=subprocess.DEVNULL,

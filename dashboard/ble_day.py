@@ -15,29 +15,37 @@ from .ble_stream import inventory, resolve, short_name
 from .settings import DATA, REGISTRY, write_private
 
 
-def report_times(root, start, end):
-    """Read observation timestamps from every saved Find My entry, including archives."""
+def findmy_sources(root):
     registry = root / REGISTRY
-    reports = defaultdict(set)
     if not registry.is_file():
-        return reports
+        return
     with closing(sqlite3.connect(f"{registry.as_uri()}?mode=ro", uri=True)) as db:
         devices = db.execute("SELECT name, config FROM devices WHERE provider='openhaystack' AND deleted=0").fetchall()
-    bounds = tuple(when.astimezone(timezone.utc).isoformat() for when in (start, end))
     for name, config in devices:
         database = json.loads(config).get("database")
-        if not database or not (path := root / database).is_file():
-            continue
+        if database and (path := root / database).is_file():
+            yield resolve(name), path
+
+
+def report_times(root, start, end):
+    """Read observation timestamps from every saved Find My entry, including archives."""
+    reports = defaultdict(set)
+    bounds = tuple(when.astimezone(timezone.utc).isoformat() for when in (start, end))
+    for tag, path in findmy_sources(root):
         with closing(sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True)) as db:
             times = db.execute("SELECT DISTINCT timestamp FROM sightings WHERE timestamp >= ? AND timestamp < ?", bounds).fetchall()
         if times:
-            reports[resolve(name)].update(datetime.fromisoformat(row[0]).astimezone(start.tzinfo) for row in times)
+            reports[tag].update(datetime.fromisoformat(row[0]).astimezone(start.tzinfo) for row in times)
     return reports
 
 
+def day_bounds(day):
+    return (datetime.combine(day, time.min).astimezone(),
+            datetime.combine(day + timedelta(days=1), time.min).astimezone())
+
+
 def day_data(day, root):
-    start = datetime.combine(day, time.min).astimezone()
-    end = datetime.combine(day + timedelta(days=1), time.min).astimezone()
+    start, end = day_bounds(day)
     after = start.astimezone(timezone.utc).isoformat()[:16]
     receptions = defaultdict(list)
     before = end.astimezone(timezone.utc).isoformat()[:16]
@@ -64,9 +72,10 @@ def exact_intervals(folder, start, end, tags):
     return intervals
 
 
-def day_plot_path(folder, day, selected=()):
+def day_plot_path(folder, day, selected=(), *, diagnostics=False):
     names = "-".join(short_name(tag) for tag in selected) or "all"
-    return folder / f"{names}-{day.isoformat()}-day.png"
+    suffix = "diagnostics" if diagnostics else "day"
+    return folder / f"{names}-{day.isoformat()}-{suffix}.png"
 
 
 def render_day(day, selected=(), root=DATA, folder=None):
@@ -74,11 +83,11 @@ def render_day(day, selected=(), root=DATA, folder=None):
     from matplotlib.figure import Figure
 
     folder = folder if folder is not None else Path.home() / "blelog"
-    start, end, local, reports = day_data(day, root)
+    start, day_end, local, reports = day_data(day, root)
     now = datetime.now().astimezone(start.tzinfo)
     if now < start:
         raise ValueError(f"{day} is in the future")
-    end = min(end, now)
+    end = min(day_end, now)
     tags = list(selected or sorted(set(local) | set(reports)))
     exact = exact_intervals(folder, start, end, tags)
     metadata = inventory(root)
@@ -154,7 +163,10 @@ def render_day(day, selected=(), root=DATA, folder=None):
             findmy.text(.013, lane, "No Find My observations", va="center", color=muted, size=9,
                         transform=findmy.get_yaxis_transform(),
                         bbox={"facecolor": "white", "edgecolor": "none", "pad": 1.5})
-    findmy.set_xlim(start, max(end, start + timedelta(minutes=5)))
+    if end < day_end:
+        for ax in axes:
+            ax.axvspan(end, day_end, color="#F1F4F7", zorder=0)
+    findmy.set_xlim(start, day_end)
     findmy.xaxis.set_major_locator(dates.AutoDateLocator(tz=start.tzinfo, minticks=5, maxticks=13))
     findmy.xaxis.set_major_formatter(dates.DateFormatter("%H:%M", tz=start.tzinfo))
     fig.text(.125, .034, "Find My ticks use observation time. Local BLE counts include receptions only.",

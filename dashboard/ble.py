@@ -15,6 +15,7 @@ from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .diagnostics import Heartbeat
 from .hubble_ble import decode_hubble, hubble_identities, match_hubble
 from .settings import DATA, write_private
 
@@ -293,6 +294,7 @@ def monitor(adapter):
     stats = {}
     pending = {}
     started = stamp(time.time())
+    health = Heartbeat(DATA, "monitor")
 
     def packet(tag, network, epoch, rssi, _raw, payload):
         minute = stamp(epoch)[:16]
@@ -306,6 +308,7 @@ def monitor(adapter):
             "started_at": started, "updated_at": stamp(time.time()), "tags": stats,
         }, sort_keys=True).encode())
         notify_watchdog()
+        health.tick()
 
     try:
         scan(adapter, packet, on_tick=publish)

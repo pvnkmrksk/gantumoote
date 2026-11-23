@@ -441,12 +441,20 @@ class Portal:
         return {"packets": packets}
 
     def status(self, ids, state, error=None, delay=0):
+        from .diagnostics import POLL_STATES, record_poll
+
+        findmy_tags = []
+        next_poll = time.time() + delay if delay else 0
         with self.db() as c:
             for ident in ids:
-                c.execute(
-                    "UPDATE devices SET state=?,error=?,next_poll=? WHERE id=? AND active=1 AND deleted=0",
-                    (state, error, time.time() + delay if delay else 0, ident),
-                )
+                device = c.execute(
+                    "UPDATE devices SET state=?,error=?,next_poll=? WHERE id=? AND active=1 AND deleted=0 "
+                    "RETURNING name,provider",
+                    (state, error, next_poll, ident),
+                ).fetchone()
+                if device and state in POLL_STATES and device[1] == "openhaystack":
+                    findmy_tags.append(device[0])
+        record_poll(self.root, state, findmy_tags)
 
     def save_reports(self, d, reports):
         added = 0

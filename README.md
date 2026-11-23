@@ -330,7 +330,12 @@ The service writes TSVs continuously and renders plots on demand. Existing archi
 In the signed-in dashboard, open **Flash history & Pi BLE → View daily BLE and Find My plots**.
 Pick a calendar date in the Pi's local time and optionally enter tag names. The chart combines minute
 reception history, exact gaps where packet TSVs exist, and saved Find My observation timestamps. Use the
-PNG link to download it. The view and image use the same sign-in as Flash history.
+PNG link to download it. The view and images use the same sign-in as Flash history.
+
+Open **Diagnostics** below the plot to compare the Pi monitor and recorder heartbeats with Find My poll
+attempts and outcomes on the same axis. With tags selected, each tag has its own Find My row. The older
+service intervals come from imported systemd events. Older Find My markers show when reports were saved.
+The terminal can render the same panel using `--plot-day YYYY-MM-DD --diagnostics`.
 
 Plot the same day from the Pi or use the Mac SSH launcher to download the PNG.
 
