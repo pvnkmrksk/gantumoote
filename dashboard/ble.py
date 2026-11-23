@@ -5,7 +5,9 @@ import argparse
 import base64
 import json
 import logging
+import os
 import signal
+import socket
 import sqlite3
 import struct
 import time
@@ -155,13 +157,27 @@ def log_receptions(root, pending):
     pending.clear()
 
 
-def reception_history(root, since):
+def reception_history(root, since, until=None):
     path = root / HISTORY
     if not path.is_file():
         return []
+    query = "SELECT tag, minute, reports, last_seen, rssi, status_byte FROM receptions WHERE minute >= ?"
+    bounds = (since,)
+    if until is not None:
+        query += " AND minute < ?"
+        bounds += (until,)
     with closing(sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True)) as db:
-        return db.execute("""SELECT tag, minute, reports, last_seen, rssi, status_byte FROM receptions
-            WHERE minute >= ? ORDER BY minute DESC, tag""", (since,)).fetchall()
+        return db.execute(query + " ORDER BY minute DESC, tag", bounds).fetchall()
+
+
+def notify_watchdog():
+    address = os.environ.get("NOTIFY_SOCKET")
+    if not address:
+        return
+    if address.startswith("@"):
+        address = "\0" + address[1:]
+    with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as notifier:
+        notifier.sendto(b"WATCHDOG=1", address)
 
 
 def scan(adapter, on_packet, *, on_tick=None, refresh_seconds=10):
@@ -289,6 +305,7 @@ def monitor(adapter):
         write_private(STATUS, json.dumps({
             "started_at": started, "updated_at": stamp(time.time()), "tags": stats,
         }, sort_keys=True).encode())
+        notify_watchdog()
 
     try:
         scan(adapter, packet, on_tick=publish)

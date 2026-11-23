@@ -256,8 +256,14 @@ def main():
     previous = {}
     plain = args.record_known or args.plain or not sys.stdout.isatty() or os.environ.get("TERM") == "dumb"
     log_file = log_path = writer = None
-    if args.record or args.record_known:
+    opened_at = None
+
+    def begin_recording():
+        nonlocal log_file, log_path, writer, opened_at
+        if log_file is not None:
+            log_file.close()
         log_file, log_path = create_recording(Path.home() / "blelog", selected)
+        opened_at = time.monotonic()
         writer = csv.writer(log_file, delimiter="\t")
         writer.writerow(("timestamp", "tag", "network", "rssi_dbm", "temp_c", "raw_ad_hex", "interval_s"))
         log_file.flush()
@@ -265,6 +271,14 @@ def main():
             print(f"Recording to {log_path} on the Pi", file=sys.stderr)
             if not args.record_known:
                 print(f"Plot: {log_path.with_suffix('.png')}", file=sys.stderr)
+
+    if args.record or args.record_known:
+        begin_recording()
+
+    def maintain_recording():
+        if time.monotonic() - opened_at >= 86400:
+            begin_recording()
+        ble.notify_watchdog()
 
     plots = PlotUpdates(log_path, [short_name(tag) for tag in selected]) if log_path and not args.record_known else nullcontext()
     light_path = log_path.with_suffix(".lux.tsv") if client and log_path else None
@@ -306,7 +320,8 @@ def main():
         sys.stdout.write("\x1b[?25l")
     try:
         with plots, light if light else nullcontext():
-            ble.scan(args.adapter, packet, on_tick=None if plain else refresh, refresh_seconds=1)
+            tick = maintain_recording if args.record_known else (None if plain else refresh)
+            ble.scan(args.adapter, packet, on_tick=tick, refresh_seconds=10 if args.record_known else 1)
     finally:
         if log_file is not None:
             log_file.close()

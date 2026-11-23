@@ -40,7 +40,8 @@ def day_data(day, root):
     end = datetime.combine(day + timedelta(days=1), time.min).astimezone()
     after = start.astimezone(timezone.utc).isoformat()[:16]
     receptions = defaultdict(list)
-    for tag, minute, count, last, rssi, status in reversed(reception_history(root, after)):
+    before = end.astimezone(timezone.utc).isoformat()[:16]
+    for tag, minute, count, last, rssi, status in reversed(reception_history(root, after, before)):
         last_seen = datetime.fromisoformat(last).astimezone(start.tzinfo)
         if start <= last_seen < end:
             receptions[tag].append((datetime.fromisoformat(minute + "+00:00").astimezone(start.tzinfo),
@@ -63,6 +64,11 @@ def exact_intervals(folder, start, end, tags):
     return intervals
 
 
+def day_plot_path(folder, day, selected=()):
+    names = "-".join(short_name(tag) for tag in selected) or "all"
+    return folder / f"{names}-{day.isoformat()}-day.png"
+
+
 def render_day(day, selected=(), root=DATA, folder=None):
     from matplotlib import dates, ticker
     from matplotlib.figure import Figure
@@ -74,8 +80,6 @@ def render_day(day, selected=(), root=DATA, folder=None):
         raise ValueError(f"{day} is in the future")
     end = min(end, now)
     tags = list(selected or sorted(set(local) | set(reports)))
-    if not tags:
-        raise ValueError(f"No BLE or Find My records for {day}. Use --tags to plot selected tags.")
     exact = exact_intervals(folder, start, end, tags)
     metadata = inventory(root)
     fig = Figure(figsize=(13, 9.5 + .16 * max(0, len(tags) - 4)))
@@ -107,6 +111,9 @@ def render_day(day, selected=(), root=DATA, folder=None):
         (temp, "Last decoded reading per minute · centered weighted average"),
     ):
         ax.set_title(caption, loc="right", fontsize=8.5, color=muted, pad=6)
+    if not any(local.values()) and not any(reports.values()):
+        hits.text(.015, .5, "No BLE or Find My observations for this day", transform=hits.transAxes,
+                  va="center", color=muted)
     if any(exact.values()):
         gaps.set_yscale("log", base=2)
         gaps.yaxis.set_major_locator(ticker.LogLocator(base=2, numticks=8))
@@ -120,7 +127,7 @@ def render_day(day, selected=(), root=DATA, folder=None):
     bins = [start + timedelta(minutes=5 * n)
             for n in range(int((end - start).total_seconds() // 300) + 2)]
     findmy.set_yticks(range(len(tags)), [short_name(tag) for tag in tags])
-    findmy.set_ylim(len(tags) - .45, -.55)
+    findmy.set_ylim(max(1, len(tags)) - .45, -.55)
     findmy.spines["left"].set_visible(False)
     for lane, tag in enumerate(tags):
         color = COLORS[lane % len(COLORS)]
@@ -153,8 +160,7 @@ def render_day(day, selected=(), root=DATA, folder=None):
     fig.text(.125, .034, "Find My ticks use observation time. Local BLE counts include receptions only.",
              color=muted, size=9)
 
-    names = "-".join(short_name(tag) for tag in selected) or "all"
-    path = folder / f"{names}-{day.isoformat()}-day.png"
+    path = day_plot_path(folder, day, selected)
     with BytesIO() as image:
         fig.savefig(image, format="png", dpi=160, backend="agg")
         write_private(path, image.getvalue())

@@ -320,13 +320,19 @@ dashboard/pi/install-ble-recording.sh
 systemctl status gantumoote-ble-recording --no-pager
 ```
 
-The service starts at boot, rotates to a new private `known-*.tsv` every 24 hours, and resumes after a failure.
+The service starts at boot, rotates to a new private `known-*.tsv` every 24 hours while discovery keeps running,
+and restarts after a failure. The monitor and recorder have a 45-second watchdog for a stalled scan loop.
+The watchdog measures the scan loop so solar tags can go silent overnight.
 Only adverts matched by the local tag keys reach the recorder. At approximately 120 bytes per received advert,
 four tags received every 3 s around the clock use about 14 MB per day before compression.
 The service writes TSVs continuously and renders plots on demand. Existing archives stay on the Pi until removed.
 
-Plot a local calendar day using the minute reception history, exact gaps where packet TSVs exist, and saved
-Find My observation timestamps. Run this from the Pi or use the Mac SSH launcher to download the PNG.
+In the signed-in dashboard, open **Flash history & Pi BLE → View daily BLE and Find My plots**.
+Pick a calendar date in the Pi's local time and optionally enter tag names. The chart combines minute
+reception history, exact gaps where packet TSVs exist, and saved Find My observation timestamps. Use the
+PNG link to download it. The view and image use the same sign-in as Flash history.
+
+Plot the same day from the Pi or use the Mac SSH launcher to download the PNG.
 
 ```sh
 gantu-ble --plot-day 2026-11-23 --tags h03 h04 h05 h06

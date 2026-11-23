@@ -27,6 +27,7 @@ WorkingDirectory=$root
 ExecStart=/usr/bin/python3 -m dashboard.ble monitor
 Restart=always
 RestartSec=10
+WatchdogSec=45
 UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true

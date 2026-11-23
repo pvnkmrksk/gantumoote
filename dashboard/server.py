@@ -15,9 +15,10 @@ import os
 import secrets
 import signal
 import sqlite3
+import subprocess
 import threading
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
@@ -26,7 +27,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from pywebpush import WebPushException, webpush
 
-from . import flash
+from . import ble_day_web, flash
 from .ble import reception_history
 from .guide_view import guide_html, GUIDES
 from .portal import ClosingConnection, Portal
@@ -214,6 +215,21 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, flash.page(DATA), "text/html; charset=utf-8", {
                 "Content-Security-Policy": "default-src 'none'; style-src 'self'; base-uri 'none'; frame-ancestors 'none'",
             })
+        if path in (ble_day_web.PAGE, ble_day_web.IMAGE):
+            today = date.today()
+            try:
+                day, tags = ble_day_web.selection(url.query, today)
+            except ValueError:
+                return self.send(400, {"error": "Choose a valid date and up to 12 tag names."})
+            if path == ble_day_web.PAGE:
+                return self.send(200, ble_day_web.page(day, tags, today), "text/html; charset=utf-8",
+                                 ble_day_web.PAGE_HEADERS)
+            try:
+                png = ble_day_web.plot(day, tags)
+            except (OSError, subprocess.SubprocessError):
+                return self.send(503, {"error": "The day plot is temporarily unavailable."},
+                                 headers={"Retry-After": "30"})
+            return self.send(200, png, "image/png", ble_day_web.CHART_HEADERS)
         if path == "/flash/ble.csv":
             since = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()[:16]
             with io.StringIO() as stream:

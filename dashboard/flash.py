@@ -210,6 +210,7 @@ def page(root):
 <p>Match the board marking and tag number before downloading its prepared configuration. Use the same tag’s key
  to register it. The download stays private under this dashboard session.</p>
 {table}
+<p><a href="/flash/ble-day">View daily BLE and Find My plots</a></p>
 <p><a href="/flash/ble.csv" download>Download the last 24 hours of Pi BLE receptions</a></p>{archives}
 </main></body></html>"""
 
