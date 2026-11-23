@@ -39,12 +39,19 @@ def measured(value):
 
 def read_packets(path):
     tags = defaultdict(list)
-    for row in rows(path, "timestamp", "tag", "network", "interval_s", "rssi_dbm", "temp_c"):
+    previous = {}
+    for row in rows(path, "timestamp", "tag", "network", "rssi_dbm", "temp_c"):
         when = datetime.fromisoformat(row["timestamp"])
         if when.tzinfo is None:
             raise ValueError(f"{path.name} timestamps need a UTC offset")
-        tags[row["tag"]].append((when, measured(row["interval_s"]),
-                                 measured(row["rssi_dbm"]), measured(row["temp_c"])))
+        if "interval_s" in row:
+            gap = measured(row["interval_s"])
+        else:
+            stream = row["tag"], row["network"]
+            prior = previous.get(stream)
+            previous[stream] = when
+            gap = (when - prior).total_seconds() if prior is not None and when >= prior else None
+        tags[row["tag"]].append((when, gap, measured(row["rssi_dbm"]), measured(row["temp_c"])))
     for packets in tags.values():
         packets.sort(key=lambda packet: packet[0])
     return tags
