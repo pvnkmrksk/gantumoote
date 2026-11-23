@@ -277,17 +277,41 @@ with each tag’s latest raw advert below. The interval is measured per tag and 
 can extend the observed interval. The screen refreshes once per second and `--window` sets the plot span.
 `--record` saves the private TSV and a sibling PNG in `~/blelog` on the Pi. The PNG appears when the logger starts,
 refreshes every 30 seconds when there are new samples, and includes the final samples after Ctrl-C. It shows
-packet arrivals and counts, reception gaps with a five-gap rolling median, RSSI with a least-squares line
-per tag, and decoded temperature. Selected tags that stay silent get an empty row. The terminal prints one line
+packet arrivals and counts, reception gaps with a five-gap rolling median, and raw RSSI and temperature
+points with centered weighted averages over up to nine readings. The curves break across long reception gaps. Selected tags that stay silent get an empty row. The terminal prints one line
 per advert when piped or run with `--plain`. Link `dashboard/pi/gantu-ble` into `~/.local/bin/` to use `gantu-ble`
 from any directory.
 
-Regenerate the PNG from a saved recording without starting Bluetooth discovery. Substitute the exact TSV path
-printed by the logger. Quote the tilde if your local command forwards to the Pi over SSH.
+Regenerate a private PNG without starting Bluetooth discovery. Use `latest` for the newest recording by
+start time, or pass the exact TSV path printed by the logger. Quoting the tilde lets the Pi expand it.
 
 ```sh
+gantu-ble --plot latest
 gantu-ble --plot '~/blelog/recording.tsv'
 ```
+
+To run the same command from a Mac, install the SSH launcher from this checkout:
+
+```sh
+mkdir -p ~/.local/bin ~/.config/gantu-ble
+install -m 0755 dashboard/pi/gantu-ble-ssh ~/.local/bin/gantu-ble
+```
+
+Set up the `gantu-bench` host in `~/.config/gantu-ble/ssh_config` with the Pi's address, account and
+your existing SSH identity and verified host key. The Pi needs its own `~/.local/bin/gantu-ble` link.
+
+```sshconfig
+Host gantu-bench
+    HostName 192.168.1.50
+    User pi
+    IdentityFile ~/.ssh/pi_ed25519
+    UserKnownHostsFile ~/.ssh/pi_known_hosts
+    IdentitiesOnly yes
+    StrictHostKeyChecking yes
+```
+
+On the Mac, `gantu-ble --plot latest` downloads just the generated PNG to `~/Downloads/Gantu BLE`,
+prints its local path, and opens it in your default image viewer when run interactively.
 
 For a phone with an ambient light sensor exposed to Phyphox, open **Light**, enable remote access,
 and press Start. Use the URL shown by the app while the Pi and phone are on the same local network:

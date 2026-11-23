@@ -9,13 +9,14 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from io import BytesIO
 from pathlib import Path
-from statistics import linear_regression, median
+from statistics import median
 from threading import Event, Thread
 
 from .settings import write_private
 
-RECORDING_NAME = re.compile(r"((?:[hi][0-9]+-)+)[0-9]{8}_[0-9]{6}(?:-[^.]+)?")
+RECORDING_NAME = re.compile(r"((?:[hi][0-9]+-)+)([0-9]{8}_[0-9]{6})(?:-[^.]+)?")
 REFRESH_SECONDS = 30
+SMOOTH_RADIUS = 4
 COLORS = ("#1168AB", "#AF4B08", "#8B409E", "#1D7859", "#A63559", "#57662A")
 
 
@@ -69,14 +70,35 @@ def draw_trace(ax, points, color):
         ax.scatter(times, values, s=14, color=color, alpha=.62, linewidths=0, zorder=3)
 
 
-def draw_rssi_fit(ax, points, color):
-    if len(points) < 3 or points[0][0] == points[-1][0]:
+def draw_smooth(ax, points, color):
+    """Draw a centered triangular moving average with gaps at long silences."""
+    if len(points) < 3:
         return
     times, values = zip(*points)
-    elapsed = [(when - times[0]).total_seconds() for when in times]
-    slope, intercept = linear_regression(elapsed, values)
-    ax.plot([times[0], times[-1]], [intercept, intercept + slope * elapsed[-1]],
-            color=color, linewidth=1.8, zorder=4)
+    gaps = [(b - a).total_seconds() for a, b in zip(times, times[1:])]
+    positive = [gap for gap in gaps if gap > 0]
+    if not positive:
+        return
+    max_gap = 4 * median(positive)
+    boundaries = [0, *(i for i, gap in enumerate(gaps, 1) if gap > max_gap), len(points)]
+    for start, end in zip(boundaries, boundaries[1:]):
+        if end - start < 3:
+            continue
+        smoothed = []
+        for i in range(start, end):
+            neighbors = range(max(start, i - SMOOTH_RADIUS), min(end, i + SMOOTH_RADIUS + 1))
+            weights = [SMOOTH_RADIUS + 1 - abs(i - j) for j in neighbors]
+            smoothed.append(sum(values[j] * weight for j, weight in zip(neighbors, weights)) / sum(weights))
+        ax.plot(times[start:end], smoothed, color=color, linewidth=1.8, zorder=4)
+
+
+def latest_recording(directory):
+    recordings = ((match[2], path) for path in directory.glob("*.tsv")
+                  if (match := RECORDING_NAME.fullmatch(path.stem)))
+    latest = max(recordings, default=None)
+    if latest is None:
+        raise FileNotFoundError(f"No BLE recordings in {directory}")
+    return latest[1]
 
 
 def render_recording(path, selected=()):
@@ -154,8 +176,9 @@ def render_recording(path, selected=()):
             intervals.plot(times[4:], [median(values[i - 4:i + 1]) for i in range(4, len(values))],
                            color=color, linewidth=1.8, zorder=4)
         draw_trace(signal, rssi, color)
-        draw_rssi_fit(signal, rssi, color)
+        draw_smooth(signal, rssi, color)
         draw_trace(temperature, temps, color)
+        draw_smooth(temperature, temps, color)
 
     if has_gaps:
         intervals.set_yscale("log", base=2)
@@ -163,10 +186,11 @@ def render_recording(path, selected=()):
         intervals.yaxis.set_major_formatter(ticker.FuncFormatter(lambda value, _: f"{value:g}"))
         intervals.yaxis.set_minor_locator(ticker.NullLocator())
         intervals.set_ylabel("Seconds (log scale)", color=muted)
+    smooth_note = f"Centered weighted average of up to {2 * SMOOTH_RADIUS + 1} readings"
     for ax, present, note, empty in (
         (intervals, has_gaps, "Lines show the trailing median of 5 gaps", "Waiting for a second advert"),
-        (signal, has_rssi, "Lines show a least-squares fit per tag", "No RSSI readings"),
-        (temperature, has_temp, "", "No decoded temperatures"),
+        (signal, has_rssi, smooth_note, "No RSSI readings"),
+        (temperature, has_temp, smooth_note, "No decoded temperatures"),
     ):
         if present and note:
             ax.set_title(note, loc="right", fontsize=8.5, color=muted)

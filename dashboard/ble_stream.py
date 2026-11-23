@@ -20,7 +20,7 @@ from pathlib import Path
 from statistics import median
 
 from . import ble
-from .ble_plot import PlotUpdates, render_recording
+from .ble_plot import PlotUpdates, latest_recording, render_recording
 from .flash import NETWORK, TAG, read_json, records
 from .phyphox import LightClient, LightFeed, timestamp
 from .settings import DATA, REGISTRY
@@ -206,7 +206,7 @@ def main():
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("-l", "--list", action="store_true", help="list known tags and their short names")
     mode.add_argument("-d", "--devices", nargs="+", metavar="TAG", help="stream tag names, e.g. -d h03 h04")
-    mode.add_argument("--plot", type=Path, metavar="TSV", help="render a saved recording as a private PNG")
+    mode.add_argument("--plot", metavar="TSV|latest", help="render a saved or latest recording as a private PNG")
     parser.add_argument("--plain", action="store_true", help="one line per advert, suitable for a file or pipe")
     parser.add_argument("--record", action="store_true", help="save a private TSV and PNG in ~/blelog on the Pi")
     parser.add_argument("--window", type=int, default=120, help="seconds shown in the live plots (default: 120)")
@@ -215,7 +215,8 @@ def main():
     args = parser.parse_args()
     if args.plot:
         try:
-            print(render_recording(args.plot.expanduser()))
+            recording = latest_recording(Path.home() / "blelog") if args.plot == "latest" else Path(args.plot).expanduser()
+            print(render_recording(recording))
         except ImportError:
             parser.exit(1, "BLE plot requires Matplotlib. Install python3-matplotlib on the Pi.\n")
         except (OSError, ValueError) as error:

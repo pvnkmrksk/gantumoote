@@ -1,0 +1,65 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
+"""Run the BLE CLI over pinned SSH and fetch plots to this computer."""
+
+import os
+import shlex
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+SSH_CONFIG = Path.home() / ".config/gantu-ble/ssh_config"
+PLOT_DIRECTORY = Path.home() / "Downloads/Gantu BLE"
+
+
+def ssh(command, tty=False):
+    return ["/usr/bin/ssh", "-t" if tty else "-T", "-F", str(SSH_CONFIG),
+            "gantu-bench", command]
+
+
+def fetch_plot(command):
+    result = subprocess.run(ssh(command), check=True, stdout=subprocess.PIPE, text=True)
+    remote = Path(result.stdout.rstrip("\n"))
+    if not remote.is_absolute() or remote.suffix != ".png":
+        raise ValueError(f"Expected a PNG path from the Pi, got {result.stdout.strip()!r}")
+
+    PLOT_DIRECTORY.mkdir(mode=0o700, parents=True, exist_ok=True)
+    output = PLOT_DIRECTORY / remote.name
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=PLOT_DIRECTORY, delete=False) as stream:
+            temporary = Path(stream.name)
+            subprocess.run(ssh(shlex.join(["cat", "--", str(remote)])), check=True, stdout=stream)
+            stream.seek(0)
+            if stream.read(8) != b"\x89PNG\r\n\x1a\n":
+                raise ValueError("The Pi did not return a PNG")
+        temporary.replace(output)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+    print(output, flush=True)
+    if sys.platform == "darwin" and sys.stdout.isatty():
+        subprocess.run(["/usr/bin/open", str(output)], check=True)
+
+
+def main(args):
+    command = '"$HOME/.local/bin/gantu-ble" ' + shlex.join(args)
+    plot = any(arg == "--plot" or arg.startswith("--plot=") for arg in args)
+    if plot and not any(arg in ("-h", "--help") for arg in args):
+        try:
+            fetch_plot(command)
+        except subprocess.CalledProcessError as error:
+            return error.returncode
+        except (OSError, ValueError) as error:
+            print(f"Cannot fetch BLE plot: {error}", file=sys.stderr)
+            return 1
+        return 0
+    tty = sys.stdin.isatty() and sys.stdout.isatty() and "--plain" not in args and any(
+        arg in ("-d", "--devices") or arg.startswith("--devices=") for arg in args
+    )
+    os.execv("/usr/bin/ssh", ssh(command, tty))
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
