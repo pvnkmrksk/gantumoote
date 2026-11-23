@@ -20,6 +20,7 @@ from pathlib import Path
 from statistics import median
 
 from . import ble
+from .ble_plot import PlotUpdates, render_recording
 from .flash import NETWORK, TAG, read_json, records
 from .phyphox import LightClient, LightFeed, timestamp
 from .settings import DATA, REGISTRY
@@ -205,12 +206,21 @@ def main():
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("-l", "--list", action="store_true", help="list known tags and their short names")
     mode.add_argument("-d", "--devices", nargs="+", metavar="TAG", help="stream tag names, e.g. -d h03 h04")
+    mode.add_argument("--plot", type=Path, metavar="TSV", help="render a saved recording as a private PNG")
     parser.add_argument("--plain", action="store_true", help="one line per advert, suitable for a file or pipe")
-    parser.add_argument("--record", action="store_true", help="save selected adverts privately in ~/blelog on the Pi")
+    parser.add_argument("--record", action="store_true", help="save a private TSV and PNG in ~/blelog on the Pi")
     parser.add_argument("--window", type=int, default=120, help="seconds shown in the live plots (default: 120)")
     parser.add_argument("--phyphox", metavar="URL", help="show and log the phone’s live Phyphox Light readings")
     parser.add_argument("--adapter", default="hci0")
     args = parser.parse_args()
+    if args.plot:
+        try:
+            print(render_recording(args.plot.expanduser()))
+        except ImportError:
+            parser.exit(1, "BLE plot requires Matplotlib. Install python3-matplotlib on the Pi.\n")
+        except (OSError, ValueError) as error:
+            parser.exit(1, f"Could not plot recording: {error}\n")
+        return
     if not 15 <= args.window <= 3600:
         parser.error("--window must be between 15 and 3600 seconds")
     try:
@@ -240,7 +250,9 @@ def main():
         log_file.flush()
         if plain:
             print(f"Recording to {log_path} on the Pi", file=sys.stderr)
+            print(f"Plot: {log_path.with_suffix('.png')}", file=sys.stderr)
 
+    plots = PlotUpdates(log_path, [short_name(tag) for tag in selected]) if log_path else nullcontext()
     light_path = log_path.with_suffix(".lux.tsv") if client and log_path else None
     light = LightFeed(client, light_path, plain=plain) if client else None
 
@@ -273,13 +285,15 @@ def main():
     if not plain:
         sys.stdout.write("\x1b[?25l")
     try:
-        with light if light else nullcontext():
+        with plots, light if light else nullcontext():
             ble.scan(args.adapter, packet, on_tick=None if plain else refresh, refresh_seconds=1)
     finally:
         if log_file is not None:
             log_file.close()
         if not plain:
             print("\x1b[?25h" + (f"\nSaved on the Pi at {log_path}" if log_path else ""))
+            if log_path and log_path.with_suffix(".png").is_file():
+                print(f"Plot: {log_path.with_suffix('.png')}")
             if light_path:
                 print(f"Phone log: {light_path}")
 

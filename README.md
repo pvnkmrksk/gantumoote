@@ -258,7 +258,7 @@ Each config uses its own tag identity. Keep both the config and its key private.
 Start the receiver on Raspberry Pi OS from the checkout:
 
 ```sh
-sudo apt install bluez python3-cryptography python3-dbus python3-gi
+sudo apt install bluez python3-cryptography python3-dbus python3-gi python3-matplotlib
 dashboard/pi/install-ble.sh
 systemctl status gantumoote-ble --no-pager
 sudo journalctl -u gantumoote-ble -n 25 --no-pager
@@ -275,9 +275,19 @@ dashboard/pi/gantu-ble -d h03 h04 --record
 The terminal plots the rolling interval between received adverts, RSSI and temperature side by side,
 with each tag’s latest raw advert below. The interval is measured per tag and network. A missed advert
 can extend the observed interval. The screen refreshes once per second and `--window` sets the plot span.
-`--record` saves each matching advert and its received interval to a private TSV in `~/blelog` on the Pi. The terminal prints one
-line per advert when piped or run with `--plain`. For a familiar shell command
-on this Pi, link `dashboard/pi/gantu-ble` into `~/.local/bin/`.
+`--record` saves the private TSV and a sibling PNG in `~/blelog` on the Pi. The PNG appears when the logger starts,
+refreshes every 30 seconds when there are new samples, and includes the final samples after Ctrl-C. It shows
+packet arrivals and counts, reception gaps with a five-gap rolling median, RSSI with a least-squares line
+per tag, and decoded temperature. Selected tags that stay silent get an empty row. The terminal prints one line
+per advert when piped or run with `--plain`. Link `dashboard/pi/gantu-ble` into `~/.local/bin/` to use `gantu-ble`
+from any directory.
+
+Regenerate the PNG from a saved recording without starting Bluetooth discovery. Substitute the exact TSV path
+printed by the logger. Quote the tilde if your local command forwards to the Pi over SSH.
+
+```sh
+gantu-ble --plot '~/blelog/recording.tsv'
+```
 
 For a phone with an ambient light sensor exposed to Phyphox, open **Light**, enable remote access,
 and press Start. Use the URL shown by the app while the Pi and phone are on the same local network:
@@ -287,7 +297,8 @@ dashboard/pi/gantu-ble -d h03 h04 --record --phyphox http://192.168.1.42:8080
 ```
 
 The terminal adds a lux plot on the same time window. Recording creates a sibling `.lux.tsv` beside the
-BLE TSV with the same absolute timestamp format. The Pi uses the experiment’s clock references to
+BLE TSV with the same absolute timestamp format. The PNG includes a time-aligned light panel when the lux
+log has samples. The Pi uses the experiment’s clock references to
 timestamp lux samples, so network polling delays do not shift their recorded times. Use automatic
 date and time on both devices. Phyphox’s built-in Light experiment requires Android hardware that
 exposes an ambient light sensor. [Light experiment](https://phyphox.org/experiment/light/).
