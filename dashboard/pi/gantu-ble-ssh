@@ -45,7 +45,7 @@ def fetch_plot(command):
 
 def main(args):
     command = '"$HOME/.local/bin/gantu-ble" ' + shlex.join(args)
-    plot = any(arg == "--plot" or arg.startswith("--plot=") for arg in args)
+    plot = any(arg in ("--plot", "--plot-day") or arg.startswith(("--plot=", "--plot-day=")) for arg in args)
     if plot and not any(arg in ("-h", "--help") for arg in args):
         try:
             fetch_plot(command)

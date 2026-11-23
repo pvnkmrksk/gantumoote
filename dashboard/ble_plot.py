@@ -14,7 +14,7 @@ from threading import Event, Thread
 
 from .settings import write_private
 
-RECORDING_NAME = re.compile(r"((?:[hi][0-9]+-)+)([0-9]{8}_[0-9]{6})(?:-[^.]+)?")
+RECORDING_NAME = re.compile(r"((?:[hi][0-9]+-)+|known-)([0-9]{8}_[0-9]{6})(?:-[^.]+)?")
 REFRESH_SECONDS = 30
 SMOOTH_RADIUS = 4
 COLORS = ("#1168AB", "#AF4B08", "#8B409E", "#1D7859", "#A63559", "#57662A")
@@ -108,7 +108,7 @@ def render_recording(path, selected=()):
     path = Path(path)
     packets = read_packets(path)
     light = read_light(path.with_suffix(".lux.tsv"))
-    if not selected and (match := RECORDING_NAME.fullmatch(path.stem)):
+    if not selected and (match := RECORDING_NAME.fullmatch(path.stem)) and match[1] != "known-":
         selected = match[1].rstrip("-").split("-")
     tags = list(dict.fromkeys((*selected, *packets)))
     first = min((samples[0][0] for samples in packets.values()), default=None)

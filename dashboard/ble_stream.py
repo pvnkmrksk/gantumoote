@@ -15,7 +15,7 @@ import time
 from collections import deque
 from contextlib import closing, nullcontext
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from statistics import median
 
@@ -195,7 +195,7 @@ def draw_light(feed, start, now, width):
 
 def create_recording(directory, selected):
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-    names = "-".join(short_name(tag) for tag in selected)
+    names = "-".join(short_name(tag) for tag in selected) or "known"
     date = datetime.now().strftime("%Y%m%d_%H%M%S")
     fd, path = tempfile.mkstemp(prefix=f"{names}-{date}-", suffix=".tsv", dir=directory)
     return os.fdopen(fd, "w", encoding="utf-8", newline=""), Path(path)
@@ -207,12 +207,24 @@ def main():
     mode.add_argument("-l", "--list", action="store_true", help="list known tags and their short names")
     mode.add_argument("-d", "--devices", nargs="+", metavar="TAG", help="stream tag names, e.g. -d h03 h04")
     mode.add_argument("--plot", metavar="TSV|latest", help="render a saved or latest recording as a private PNG")
+    mode.add_argument("--plot-day", type=date.fromisoformat, metavar="YYYY-MM-DD", help="plot the full day of local BLE and Find My reports")
+    mode.add_argument("--record-known", action="store_true", help="record all tags matched by the Pi’s tag keys")
+    parser.add_argument("--tags", nargs="+", metavar="TAG", help="select tags for --plot-day")
     parser.add_argument("--plain", action="store_true", help="one line per advert, suitable for a file or pipe")
     parser.add_argument("--record", action="store_true", help="save a private TSV and PNG in ~/blelog on the Pi")
     parser.add_argument("--window", type=int, default=120, help="seconds shown in the live plots (default: 120)")
     parser.add_argument("--phyphox", metavar="URL", help="show and log the phone’s live Phyphox Light readings")
     parser.add_argument("--adapter", default="hci0")
     args = parser.parse_args()
+    if args.plot_day:
+        from .ble_day import render_day
+        try:
+            print(render_day(args.plot_day, tuple(dict.fromkeys(resolve(tag) for tag in args.tags or ()))))
+        except (ImportError, OSError, ValueError, sqlite3.Error) as error:
+            parser.exit(1, f"Could not plot day: {error}\n")
+        return
+    if args.tags:
+        parser.error("--tags requires --plot-day")
     if args.plot:
         try:
             recording = latest_recording(Path.home() / "blelog") if args.plot == "latest" else Path(args.plot).expanduser()
@@ -235,31 +247,35 @@ def main():
             print(f"{short_name(tag):<6} {tag:<15} {entry.get('board', '—'):<7} "
                   f"{NETWORK.get(entry.get('network'), '—'):<17} {state}")
         return
-    selected = list(dict.fromkeys(resolve(name) for name in args.devices))
+    selected = list(dict.fromkeys(resolve(name) for name in args.devices or ()))
     unknown = [name for name in selected if name not in tags]
     if unknown:
         parser.error(f"unknown tags: {', '.join(unknown)}. Use -l to list your tags.")
     history = {tag: deque(maxlen=4096) for tag in selected}
     received_counts = dict.fromkeys(selected, 0)
     previous = {}
-    plain = args.plain or not sys.stdout.isatty() or os.environ.get("TERM") == "dumb"
+    plain = args.record_known or args.plain or not sys.stdout.isatty() or os.environ.get("TERM") == "dumb"
     log_file = log_path = writer = None
-    if args.record:
+    if args.record or args.record_known:
         log_file, log_path = create_recording(Path.home() / "blelog", selected)
         writer = csv.writer(log_file, delimiter="\t")
         writer.writerow(("timestamp", "tag", "network", "rssi_dbm", "temp_c", "raw_ad_hex", "interval_s"))
         log_file.flush()
         if plain:
             print(f"Recording to {log_path} on the Pi", file=sys.stderr)
-            print(f"Plot: {log_path.with_suffix('.png')}", file=sys.stderr)
+            if not args.record_known:
+                print(f"Plot: {log_path.with_suffix('.png')}", file=sys.stderr)
 
-    plots = PlotUpdates(log_path, [short_name(tag) for tag in selected]) if log_path else nullcontext()
+    plots = PlotUpdates(log_path, [short_name(tag) for tag in selected]) if log_path and not args.record_known else nullcontext()
     light_path = log_path.with_suffix(".lux.tsv") if client and log_path else None
     light = LightFeed(client, light_path, plain=plain) if client else None
 
     def packet(tag, network, epoch, rssi, raw, payload):
-        if tag not in selected:
+        if not args.record_known and tag not in selected:
             return
+        if tag not in tags:
+            tags.update(inventory(DATA))
+            tags.setdefault(tag, {})
         temp = temperature(tags[tag], network, payload)
         interval = interval_between(previous.get((tag, network)), epoch)
         previous[tag, network] = epoch
@@ -269,6 +285,8 @@ def main():
             writer.writerow((observed, short_name(tag), network, rssi, temp, raw.hex().upper(),
                              f"{interval:.3f}" if interval is not None else ""))
             log_file.flush()
+        if args.record_known:
+            return
         if plain:
             print(f"{observed}  {short_name(tag)}  {NETWORK[network]}  "
                   f"interval {value_text(interval, 's', 3)}  RSSI {value_text(rssi, 'dBm', 0)}  "
@@ -282,7 +300,8 @@ def main():
         draw(selected, history, received_counts, log_path, args.window, render_light)
 
     if plain:
-        print(f"Watching {', '.join(selected)}", file=sys.stderr)
+        watched = "tags matched by the Pi’s local keys" if args.record_known else ", ".join(selected)
+        print(f"Watching {watched}", file=sys.stderr)
     if not plain:
         sys.stdout.write("\x1b[?25l")
     try:

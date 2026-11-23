@@ -313,6 +313,28 @@ Host gantu-bench
 On the Mac, `gantu-ble --plot latest` downloads just the generated PNG to `~/Downloads/Gantu BLE`,
 prints its local path, and opens it in your default image viewer when run interactively.
 
+To keep private packet-by-packet archives of all locally keyed tags, install the recorder as the Pi user:
+
+```sh
+dashboard/pi/install-ble-recording.sh
+systemctl status gantumoote-ble-recording --no-pager
+```
+
+The service starts at boot, rotates to a new private `known-*.tsv` every 24 hours, and resumes after a failure.
+Only adverts matched by the local tag keys reach the recorder. At approximately 120 bytes per received advert,
+four tags received every 3 s around the clock use about 14 MB per day before compression.
+The service writes TSVs continuously and renders plots on demand. Existing archives stay on the Pi until removed.
+
+Plot a local calendar day using the minute reception history, exact gaps where packet TSVs exist, and saved
+Find My observation timestamps. Run this from the Pi or use the Mac SSH launcher to download the PNG.
+
+```sh
+gantu-ble --plot-day 2026-11-23 --tags h03 h04 h05 h06
+```
+
+Use the same time bins to compare the share of BLE-active windows with Find My reports. An Apple report is
+an end-to-end observation, so that share measures reporting coverage for the run.
+
 For a phone with an ambient light sensor exposed to Phyphox, open **Light**, enable remote access,
 and press Start. Use the URL shown by the app while the Pi and phone are on the same local network:
 
