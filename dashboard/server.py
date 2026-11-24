@@ -29,6 +29,7 @@ from pywebpush import WebPushException, webpush
 
 from . import ble_day_web, flash
 from .ble import reception_history
+from .ble_day import matches_csv
 from .guide_view import guide_html, GUIDES
 from .portal import ClosingConnection, Portal
 from .settings import DATA, HERE, LOCAL_URL, PRIVATE, PUSH_DB, public_url, write_private
@@ -215,7 +216,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, flash.page(DATA), "text/html; charset=utf-8", {
                 "Content-Security-Policy": "default-src 'none'; style-src 'self'; base-uri 'none'; frame-ancestors 'none'",
             })
-        if path in (ble_day_web.PAGE, ble_day_web.IMAGE, ble_day_web.DIAGNOSTICS):
+        if path in (ble_day_web.PAGE, ble_day_web.IMAGE, ble_day_web.DIAGNOSTICS, ble_day_web.MATCHES):
             today = date.today()
             try:
                 day, tags = ble_day_web.selection(url.query, today)
@@ -224,6 +225,15 @@ class Handler(BaseHTTPRequestHandler):
             if path == ble_day_web.PAGE:
                 return self.send(200, ble_day_web.page(day, tags, today), "text/html; charset=utf-8",
                                  ble_day_web.PAGE_HEADERS)
+            if path == ble_day_web.MATCHES:
+                try:
+                    csv_text = matches_csv(day, tags)
+                except (OSError, ValueError, sqlite3.Error):
+                    return self.send(503, {"error": "Advert matches are temporarily unavailable."})
+                return self.send(200, csv_text, "text/csv", {
+                    **ble_day_web.CHART_HEADERS,
+                    "Content-Disposition": f'attachment; filename="ble-find-my-matches-{day}.csv"',
+                })
             try:
                 png = ble_day_web.plot(day, tags, diagnostics=path == ble_day_web.DIAGNOSTICS)
             except (OSError, subprocess.SubprocessError):

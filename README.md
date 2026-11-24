@@ -330,7 +330,10 @@ The service writes TSVs continuously and renders plots on demand. Existing archi
 In the signed-in dashboard, open **Flash history & Pi BLE → View daily BLE and Find My plots**.
 Pick a calendar date in the Pi's local time and optionally enter tag names. The chart combines minute
 reception history, exact gaps where packet TSVs exist, and saved Find My observation timestamps. Use the
-PNG link to download it. The view and images use the same sign-in as Flash history.
+PNG link to download it. Rings mark one plausible Pi advert and crosses mark multiple candidates. Matching
+uses the same tag’s Find My adverts within ±10 seconds of the observation, with status bytes compared where
+available. Download **Advert matches CSV** for report and packet timestamps, offsets, RSSI and temperature.
+The page and its downloads use the same sign-in as Flash history.
 
 Open **Diagnostics** below the plot to compare the Pi monitor and recorder heartbeats with Find My poll
 attempts and outcomes on the same axis. With tags selected, each tag has its own Find My row. The older

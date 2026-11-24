@@ -12,6 +12,8 @@ from pathlib import Path
 from statistics import median
 from threading import Event, Thread
 
+from typing import NamedTuple
+
 from .settings import write_private
 
 RECORDING_NAME = re.compile(r"((?:[hi][0-9]+-)+|known-)([0-9]{8}_[0-9]{6})(?:-[^.]+)?")
@@ -37,6 +39,24 @@ def measured(value):
     return number if math.isfinite(number) else None
 
 
+class Packet(NamedTuple):
+    when: datetime
+    gap: float | None
+    rssi: float | None
+    temp: float | None
+    network: str
+    status: int | None
+
+
+def findmy_status(raw):
+    if not raw or len(raw) < 14 or raw[2:12].lower() != "ff4c001219":
+        return None
+    try:
+        return int(raw[12:14], 16)
+    except ValueError:
+        return None
+
+
 def read_packets(path):
     tags = defaultdict(list)
     previous = {}
@@ -51,9 +71,11 @@ def read_packets(path):
             prior = previous.get(stream)
             previous[stream] = when
             gap = (when - prior).total_seconds() if prior is not None and when >= prior else None
-        tags[row["tag"]].append((when, gap, measured(row["rssi_dbm"]), measured(row["temp_c"])))
+        network = row["network"]
+        status = findmy_status(row.get("raw_ad_hex")) if network == "findmy" else None
+        tags[row["tag"]].append(Packet(when, gap, measured(row["rssi_dbm"]), measured(row["temp_c"]), network, status))
     for packets in tags.values():
-        packets.sort(key=lambda packet: packet[0])
+        packets.sort(key=lambda packet: packet.when)
     return tags
 
 
@@ -118,8 +140,8 @@ def render_recording(path, selected=()):
     if not selected and (match := RECORDING_NAME.fullmatch(path.stem)) and match[1] != "known-":
         selected = match[1].rstrip("-").split("-")
     tags = list(dict.fromkeys((*selected, *packets)))
-    first = min((samples[0][0] for samples in packets.values()), default=None)
-    last = max((samples[-1][0] for samples in packets.values()), default=None)
+    first = min((samples[0].when for samples in packets.values()), default=None)
+    last = max((samples[-1].when for samples in packets.values()), default=None)
     start = min(first, light[0][0]) if first and light else first or (light[0][0] if light else None)
     end = max(last, light[-1][0]) if last and light else last or (light[-1][0] if light else None)
     modified = datetime.fromtimestamp(path.stat().st_mtime).astimezone()
@@ -169,11 +191,11 @@ def render_recording(path, selected=()):
                           transform=arrivals.get_yaxis_transform(),
                           bbox={"facecolor": "white", "edgecolor": "none", "pad": 1.5})
             continue
-        arrivals.scatter([row[0] for row in readings], [lane] * len(readings),
+        arrivals.scatter([packet.when for packet in readings], [lane] * len(readings),
                          marker="|", s=58, color=color, linewidths=1.1, zorder=3)
-        gaps = [(when, gap) for when, gap, _, _ in readings if gap is not None and gap > 0]
-        rssi = [(when, value) for when, _, value, _ in readings if value is not None]
-        temps = [(when, value) for when, _, _, value in readings if value is not None]
+        gaps = [(p.when, p.gap) for p in readings if p.gap is not None and p.gap > 0]
+        rssi = [(p.when, p.rssi) for p in readings if p.rssi is not None]
+        temps = [(p.when, p.temp) for p in readings if p.temp is not None]
         has_gaps |= bool(gaps)
         has_rssi |= bool(rssi)
         has_temp |= bool(temps)

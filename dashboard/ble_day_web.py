@@ -18,6 +18,7 @@ from .settings import PROJECT
 PAGE = "/flash/ble-day"
 IMAGE = f"{PAGE}.png"
 DIAGNOSTICS = f"{PAGE}-diagnostics.png"
+MATCHES = f"{PAGE}-matches.csv"
 CHART_HEADERS = {"Cross-Origin-Resource-Policy": "same-origin"}
 PAGE_HEADERS = {
     **CHART_HEADERS,
@@ -43,6 +44,7 @@ def page(day, tags, today):
     query = urlencode({"date": day.isoformat(), "tags": tag_value})
     image = html.escape(f"{IMAGE}?{query}", quote=True)
     diagnostics = html.escape(f"{DIAGNOSTICS}?{query}", quote=True)
+    matches = html.escape(f"{MATCHES}?{query}", quote=True)
     tag_value = html.escape(tag_value, quote=True)
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -57,7 +59,7 @@ def page(day, tags, today):
 <p>The day uses the Pi’s local time. Each Find My mark is an observation timestamp.</p>
 <figure class="day-plot">
   <a href="{image}"><img src="{image}" alt="Daily BLE reception counts, exact packet gaps where available, RSSI, temperature, and Find My timestamps for {day}"></a>
-  <figcaption><a href="{image}" download>Download PNG</a></figcaption>
+  <figcaption><a href="{image}" download>Download PNG</a> · <a href="{matches}" download>Advert matches CSV</a></figcaption>
 </figure>
 <details class="day-diagnostics">
   <summary>Diagnostics</summary>
