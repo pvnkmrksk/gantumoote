@@ -352,6 +352,15 @@ gantu-ble --plot-day 2026-11-23 --tags h03 h04 h05 h06
 Use the same time bins to compare the share of BLE-active windows with Find My reports. An Apple report is
 an end-to-end observation, so that share measures reporting coverage for the run.
 
+```sh
+/usr/bin/python3 -m dashboard.ble_analysis 2026-11-24 --tags h01 h03 h04 h05 h06 --compare h03 h04 h06
+```
+
+The analysis reports 5-, 15-, and 30-minute coverage, packet cadence, timing candidates, peak reception
+windows, temperature and cadence correlations, and fix accuracy and spread in metres. Use
+`--compare` for tags sharing one setup. Add
+`--lux path/to/recording.lux.tsv` to correlate against timestamped light measurements from that setup.
+
 For a phone with an ambient light sensor exposed to Phyphox, open **Light**, enable remote access,
 and press Start. Use the URL shown by the app while the Pi and phone are on the same local network:
 
