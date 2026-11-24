@@ -19,11 +19,12 @@ PAGE = "/flash/ble-day"
 IMAGE = f"{PAGE}.png"
 DIAGNOSTICS = f"{PAGE}-diagnostics.png"
 MATCHES = f"{PAGE}-matches.csv"
+EVENTS = f"{PAGE}-events.json"
 CHART_HEADERS = {"Cross-Origin-Resource-Policy": "same-origin"}
 PAGE_HEADERS = {
     **CHART_HEADERS,
     "Content-Security-Policy": "default-src 'none'; img-src 'self'; style-src 'self'; "
-                               "base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+                               "script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
 }
 _RENDER_SLOT = threading.BoundedSemaphore()
 
@@ -45,10 +46,12 @@ def page(day, tags, today):
     image = html.escape(f"{IMAGE}?{query}", quote=True)
     diagnostics = html.escape(f"{DIAGNOSTICS}?{query}", quote=True)
     matches = html.escape(f"{MATCHES}?{query}", quote=True)
+    events = html.escape(f"{EVENTS}?{query}", quote=True)
     tag_value = html.escape(tag_value, quote=True)
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Daily BLE plots · Gantumoote</title><link rel="stylesheet" href="/assets/flash.css"></head>
+<title>Daily BLE plots · Gantumoote</title><link rel="stylesheet" href="/assets/flash.css">
+<script src="/assets/ble-day.js" defer></script></head>
 <body><main><nav aria-label="Dashboard"><a href="/flash">← Flash history &amp; Pi BLE</a><a href="/">Map</a></nav>
 <h1>BLE and Find My by day</h1>
 <form class="day-controls" action="{PAGE}" method="get">
@@ -56,11 +59,20 @@ def page(day, tags, today):
   <label>Tags <input name="tags" type="text" maxlength="160" placeholder="All tags heard or reported" value="{tag_value}"></label>
   <button type="submit">Show plot</button>
 </form>
-<p>The day uses the Pi’s local time. Each Find My mark is an observation timestamp.</p>
+<p>Times use the Pi’s clock. <span class="day-report-hint" hidden>Hover or tap a Find My guide to inspect nearby adverts.</span></p>
 <figure class="day-plot">
-  <a href="{image}"><img src="{image}" alt="Daily BLE reception counts, exact packet gaps where available, RSSI, temperature, and Find My timestamps for {day}"></a>
+  <div class="day-plot-frame" data-report-events="{events}">
+    <a href="{image}"><img src="{image}" alt="Daily BLE reception counts, exact packet gaps where available, RSSI, temperature, and Find My timestamps for {day}"></a>
+    <div class="day-plot-target" hidden aria-hidden="true">
+      <span class="day-report-cursor" hidden></span><span class="day-report-tooltip" hidden></span>
+    </div>
+  </div>
   <figcaption><a href="{image}" download>Download PNG</a> · <a href="{matches}" download>Advert matches CSV</a></figcaption>
 </figure>
+<section class="day-report-inspector" aria-label="Inspect Find My reports" hidden>
+  <label>Find My report <select></select></label>
+  <div class="day-report-result" aria-live="polite"></div>
+</section>
 <details class="day-diagnostics">
   <summary>Diagnostics</summary>
   <p>Compare the Pi’s scan and recorder activity with Find My polling on the same timeline.

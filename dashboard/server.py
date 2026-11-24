@@ -29,7 +29,7 @@ from pywebpush import WebPushException, webpush
 
 from . import ble_day_web, flash
 from .ble import reception_history
-from .ble_day import matches_csv
+from .ble_day import match_events, matches_csv
 from .guide_view import guide_html, GUIDES
 from .portal import ClosingConnection, Portal
 from .settings import DATA, HERE, LOCAL_URL, PRIVATE, PUSH_DB, public_url, write_private
@@ -43,6 +43,7 @@ ASSETS = {
     "devices.js": "application/javascript",
     "ui.css": "text/css",
     "flash.css": "text/css",
+    "ble-day.js": "application/javascript",
 }
 ICON = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192">
 <rect width="192" height="192" rx="36" fill="#141119"/>
@@ -216,7 +217,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, flash.page(DATA), "text/html; charset=utf-8", {
                 "Content-Security-Policy": "default-src 'none'; style-src 'self'; base-uri 'none'; frame-ancestors 'none'",
             })
-        if path in (ble_day_web.PAGE, ble_day_web.IMAGE, ble_day_web.DIAGNOSTICS, ble_day_web.MATCHES):
+        if path in (ble_day_web.PAGE, ble_day_web.IMAGE, ble_day_web.DIAGNOSTICS,
+                    ble_day_web.MATCHES, ble_day_web.EVENTS):
             today = date.today()
             try:
                 day, tags = ble_day_web.selection(url.query, today)
@@ -225,6 +227,12 @@ class Handler(BaseHTTPRequestHandler):
             if path == ble_day_web.PAGE:
                 return self.send(200, ble_day_web.page(day, tags, today), "text/html; charset=utf-8",
                                  ble_day_web.PAGE_HEADERS)
+            if path == ble_day_web.EVENTS:
+                try:
+                    events = match_events(day, tags)
+                except (OSError, ValueError, sqlite3.Error):
+                    return self.send(503, {"error": "Report details are temporarily unavailable."})
+                return self.send(200, events, headers=ble_day_web.CHART_HEADERS)
             if path == ble_day_web.MATCHES:
                 try:
                     csv_text = matches_csv(day, tags)

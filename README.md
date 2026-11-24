@@ -333,7 +333,8 @@ reception history, exact gaps where packet TSVs exist, and saved Find My observa
 PNG link to download it. Rings mark one plausible Pi advert and crosses mark multiple candidates. Matching
 uses the same tag’s Find My adverts within ±10 seconds of the observation, with status bytes compared where
 available. Download **Advert matches CSV** for report and packet timestamps, offsets, RSSI and temperature.
-The page and its downloads use the same sign-in as Flash history.
+Faint guides run through the plot at observation times. Hover, tap, or choose a Find My report
+to inspect candidate adverts and their offsets. The page and its downloads use the same sign-in as Flash history.
 
 Open **Diagnostics** below the plot to compare the Pi monitor and recorder heartbeats with Find My poll
 attempts and outcomes on the same axis. With tags selected, each tag has its own Find My row. The older

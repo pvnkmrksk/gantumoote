@@ -19,6 +19,7 @@ from .settings import DATA, REGISTRY, write_private
 
 
 MATCH_WINDOW = timedelta(seconds=10)
+DAY_AXES = {"left": .125, "right": .965, "top": .827, "bottom": .105}
 
 
 def findmy_sources(root):
@@ -112,26 +113,49 @@ def findmy_matches(observations, packets, continuous=()):
                           if not statuses or packet.status is None or packet.status in statuses)
 
 
-def matches_csv(day, selected=(), root=DATA, folder=None):
-    folder = folder if folder is not None else Path.home() / "blelog"
+def day_matches(day, selected, root, folder):
     start, end = day_bounds(day)
     observations = report_observations(root, start, end)
     tags = selected or sorted(observations)
     packets, continuous = detailed_packets(folder, start - MATCH_WINDOW, end + MATCH_WINDOW, tags)
+    for tag in tags:
+        for when, candidates in findmy_matches(observations[tag], packets[tag], continuous[tag]):
+            yield tag, when, observations[tag][when], candidates
+
+
+def matches_csv(day, selected=(), root=DATA, folder=None):
+    folder = folder if folder is not None else Path.home() / "blelog"
     stream = StringIO()
     writer = csv.writer(stream)
     writer.writerow(("tag", "find_my_observed_at", "candidates", "pi_received_at", "pi_minus_find_my_s",
                      "rssi_dbm", "temp_c", "status_agrees"))
-    for tag in tags:
-        for when, candidates in findmy_matches(observations[tag], packets[tag], continuous[tag]):
-            if not candidates:
-                writer.writerow((tag, when.isoformat(), 0, "", "", "", "", ""))
-            for packet in candidates:
-                statuses = observations[tag][when]
-                status_agrees = "yes" if statuses and packet.status is not None else ""
-                writer.writerow((tag, when.isoformat(), len(candidates), packet.when.isoformat(),
-                                 f"{(packet.when - when).total_seconds():.3f}", packet.rssi, packet.temp, status_agrees))
+    for tag, when, statuses, candidates in day_matches(day, selected, root, folder):
+        if not candidates:
+            writer.writerow((tag, when.isoformat(), 0, "", "", "", "", ""))
+        for packet in candidates:
+            status_agrees = "yes" if statuses and packet.status is not None else ""
+            writer.writerow((tag, when.isoformat(), len(candidates), packet.when.isoformat(),
+                             f"{(packet.when - when).total_seconds():.3f}", packet.rssi, packet.temp, status_agrees))
     return stream.getvalue()
+
+
+def match_events(day, selected, root=DATA, folder=None):
+    folder = folder if folder is not None else Path.home() / "blelog"
+    start, end = day_bounds(day)
+    events = []
+    for tag, when, _, candidates in day_matches(day, selected, root, folder):
+        events.append({
+            "tag": short_name(tag),
+            "observed": when.isoformat(timespec="seconds"),
+            "candidates": [
+                {"received": p.when.astimezone(start.tzinfo).isoformat(timespec="milliseconds"),
+                 "offset": round((p.when - when).total_seconds(), 3), "rssi": p.rssi, "temp": p.temp}
+                for p in candidates
+            ],
+        })
+    events.sort(key=lambda event: event["observed"])
+    return {"start": start.isoformat(), "end": end.isoformat(), "axes": DAY_AXES,
+            "window": int(MATCH_WINDOW.total_seconds()), "events": events}
 
 
 def draw_candidates(ax, points, color, *, ambiguous=False):
@@ -169,7 +193,7 @@ def render_day(day, selected=(), root=DATA, folder=None):
     hits, gaps, strength, temp, findmy = axes = fig.subplots(
         5, 1, sharex=True, gridspec_kw={"height_ratios": [1.4, 1.15, 1.3, 1.2, 1 + .21 * max(0, len(tags) - 4)]}
     )
-    fig.subplots_adjust(left=.125, right=.965, top=.827, bottom=.105, hspace=.56)
+    fig.subplots_adjust(**DAY_AXES, hspace=.56)
     ink, muted, grid = "#192638", "#46566D", "#E1E6EC"
     fig.text(.125, .958, "BLE and Find My across the day", color=ink, size=24, weight="bold", va="top")
     fig.text(.125, .908, f"{start:%d %b %Y}  ·  through {end:%H:%M} {end:%Z}  ·  Pi reception history",
@@ -247,13 +271,18 @@ def render_day(day, selected=(), root=DATA, folder=None):
             findmy.text(.013, lane, "No Find My observations", va="center", color=muted, size=9,
                         transform=findmy.get_yaxis_transform(),
                         bbox={"facecolor": "white", "edgecolor": "none", "pad": 1.5})
+    guides = sorted({when for tag in tags for when in reports[tag]})
+    for ax in axes:
+        if guides:
+            ax.vlines(guides, 0, 1, transform=ax.get_xaxis_transform(),
+                      color=muted, linewidth=.65, alpha=.16, zorder=2)
     if end < day_end:
         for ax in axes:
             ax.axvspan(end, day_end, color="#F1F4F7", zorder=0)
     findmy.set_xlim(start, day_end)
     findmy.xaxis.set_major_locator(dates.AutoDateLocator(tz=start.tzinfo, minticks=5, maxticks=13))
     findmy.xaxis.set_major_formatter(dates.DateFormatter("%H:%M", tz=start.tzinfo))
-    fig.text(.125, .042, "Find My ticks mark observation time. Rings mark one Pi candidate and crosses mark multiple.",
+    fig.text(.125, .042, "Faint guides mark Find My observation times. Rings mark one Pi candidate and crosses mark multiple.",
              color=muted, size=9)
     fig.text(.125, .024, "Candidates are within ±10 s for the same tag. Status bytes must agree when both are available.",
              color=muted, size=8.5)
