@@ -3,6 +3,7 @@
 
 import csv
 import json
+from math import ceil
 import sqlite3
 from bisect import bisect_left, bisect_right
 from collections import defaultdict
@@ -12,7 +13,7 @@ from io import BytesIO, StringIO
 from pathlib import Path
 
 from .ble import reception_history
-from .ble_plot import COLORS, RECORDING_NAME, draw_smooth, draw_trace, read_packets
+from .ble_plot import COLORS, RECORDING_NAME, draw_smooth, draw_trace, read_packets, smooth_segments
 from .ble_stream import inventory, resolve, short_name
 from .flash import TAG
 from .settings import DATA, REGISTRY, write_private
@@ -139,23 +140,78 @@ def matches_csv(day, selected=(), root=DATA, folder=None):
     return stream.getvalue()
 
 
+def time_rows(points):
+    return [(round(when.timestamp() * 1000), round(value, 3)) for when, value in points]
+
+
+def extrema_sample(points, limit=1000):
+    """Keep local maxima and minima in dense packet traces."""
+    if len(points) <= limit:
+        return points
+    stride = ceil(len(points) / (limit // 2))
+    sampled = [points[0]]
+    for i in range(0, len(points), stride):
+        group = points[i:i + stride]
+        sampled.extend(sorted({min(group, key=lambda p: p[1]), max(group, key=lambda p: p[1])}))
+    sampled.append(points[-1])
+    return sampled
+
+
+def minute_traces(rows, entry):
+    rssi = [(last, value) for _, _, last, value, _ in rows if value is not None]
+    findmy_temp = entry.get("findmy_temp") or entry.get("telemetry") == "findmy-temperature"
+    temp = [(last, int.from_bytes(bytes([status]), signed=True) / 2)
+            for _, _, last, _, status in rows if findmy_temp and status is not None]
+    return rssi, temp
+
+
+def minute_counts(rows, start):
+    counts = defaultdict(int)
+    for minute, count, *_ in rows:
+        counts[int((minute - start).total_seconds() // 300)] += count
+    return counts
+
+
+def packet_gaps(packets, start, end):
+    return sorted((p.when, p.gap) for p in packets if p.gap and p.gap > 0 and start <= p.when < end)
+
+
 def match_events(day, selected, root=DATA, folder=None):
     folder = folder if folder is not None else Path.home() / "blelog"
-    start, end = day_bounds(day)
+    start, end, local, observations = day_data(day, root)
+    through = min(end, datetime.now().astimezone(start.tzinfo))
+    tags = selected or sorted(set(local) | set(observations))
+    packets, continuous = detailed_packets(folder, start - MATCH_WINDOW, through + MATCH_WINDOW, tags)
+    metadata = inventory(root)
     events = []
-    for tag, when, _, candidates in day_matches(day, selected, root, folder):
-        events.append({
-            "tag": short_name(tag),
-            "observed": when.isoformat(timespec="seconds"),
-            "candidates": [
-                {"received": p.when.astimezone(start.tzinfo).isoformat(timespec="milliseconds"),
-                 "offset": round((p.when - when).total_seconds(), 3), "rssi": p.rssi, "temp": p.temp}
-                for p in candidates
-            ],
+    series = []
+    for index, tag in enumerate(tags):
+        name = short_name(tag)
+        rssi, temp = minute_traces(local[tag], metadata.get(tag, {}))
+        counts = minute_counts(local[tag], start)
+        series.append({
+            "tag": name, "color": COLORS[index % len(COLORS)],
+            "hits": time_rows((start + timedelta(minutes=5 * step), count) for step, count in sorted(counts.items())),
+            "gaps": time_rows(extrema_sample(packet_gaps(packets[tag], start, through))),
+            "rssi": time_rows(rssi),
+            "temp": time_rows(temp),
+            "rssiTrend": [time_rows(segment) for segment in smooth_segments(rssi)],
+            "tempTrend": [time_rows(segment) for segment in smooth_segments(temp)],
         })
+        for when, candidates in findmy_matches(observations[tag], packets[tag], continuous[tag]):
+            events.append({
+                "tag": name,
+                "observed": when.isoformat(timespec="seconds"),
+                "candidates": [
+                    {"received": p.when.astimezone(start.tzinfo).isoformat(timespec="milliseconds"),
+                     "offset": round((p.when - when).total_seconds(), 3),
+                     "gap": p.gap, "rssi": p.rssi, "temp": p.temp}
+                    for p in candidates
+                ],
+            })
     events.sort(key=lambda event: event["observed"])
-    return {"start": start.isoformat(), "end": end.isoformat(), "axes": DAY_AXES,
-            "window": int(MATCH_WINDOW.total_seconds()), "events": events}
+    return {"start": start.isoformat(), "end": end.isoformat(), "through": through.isoformat(), "axes": DAY_AXES,
+            "window": int(MATCH_WINDOW.total_seconds()), "events": events, "series": series}
 
 
 def draw_candidates(ax, points, color, *, ambiguous=False):
@@ -163,9 +219,9 @@ def draw_candidates(ax, points, color, *, ambiguous=False):
         return
     times, values = zip(*points)
     if ambiguous:
-        ax.scatter(times, values, marker="x", s=26, color=color, linewidths=1, zorder=5)
+        ax.scatter(times, values, marker="x", s=12, color=color, linewidths=.8, zorder=5)
     else:
-        ax.scatter(times, values, marker="o", s=45, facecolors="none", edgecolors=color, linewidths=1.3, zorder=6)
+        ax.scatter(times, values, marker="o", s=18, facecolors="none", edgecolors=color, linewidths=.9, zorder=6)
 
 
 def day_plot_path(folder, day, selected=(), *, diagnostics=False):
@@ -186,8 +242,7 @@ def render_day(day, selected=(), root=DATA, folder=None):
     end = min(day_end, now)
     tags = list(selected or sorted(set(local) | set(reports)))
     packets, continuous = detailed_packets(folder, start - MATCH_WINDOW, end + MATCH_WINDOW, tags)
-    exact = {tag: [(p.when, p.gap) for p in packets[tag] if p.gap and p.gap > 0 and start <= p.when < end]
-             for tag in tags}
+    exact = {tag: packet_gaps(packets[tag], start, end) for tag in tags}
     metadata = inventory(root)
     fig = Figure(figsize=(13, 9.5 + .16 * max(0, len(tags) - 4)))
     hits, gaps, strength, temp, findmy = axes = fig.subplots(
@@ -238,17 +293,11 @@ def render_day(day, selected=(), root=DATA, folder=None):
     findmy.spines["left"].set_visible(False)
     for lane, tag in enumerate(tags):
         color = COLORS[lane % len(COLORS)]
-        counts = defaultdict(int)
-        for minute, count, *_ in local[tag]:
-            counts[int((minute - start).total_seconds() // 300)] += count
+        counts = minute_counts(local[tag], start)
         if counts:
             hits.step(bins, [counts[i] for i in range(len(bins))], where="post", color=color, lw=1.65)
         draw_trace(gaps, sorted(exact[tag]), color)
-        rssi = [(last, value) for _, _, last, value, _ in local[tag] if value is not None]
-        entry = metadata.get(tag, {})
-        findmy_temp = entry.get("findmy_temp") or entry.get("telemetry") == "findmy-temperature"
-        temps = [(last, int.from_bytes(bytes([status]), signed=True) / 2)
-                 for _, _, last, _, status in local[tag] if findmy_temp and status is not None]
+        rssi, temps = minute_traces(local[tag], metadata.get(tag, {}))
         for ax, points in ((strength, rssi), (temp, temps)):
             draw_trace(ax, points, color)
             draw_smooth(ax, points, color)
@@ -264,7 +313,7 @@ def render_day(day, selected=(), root=DATA, folder=None):
         findmy.axhline(lane, color=grid, lw=.8)
         findmy.get_yticklabels()[lane].set(color=color if counts or times else muted, weight="bold")
         if times:
-            findmy.scatter(times, [lane] * len(times), marker="|", s=45, color=color, alpha=.56, linewidths=1.1, zorder=3)
+            findmy.scatter(times, [lane] * len(times), marker="|", s=20, color=color, alpha=.56, linewidths=.85, zorder=3)
             draw_candidates(findmy, [(when, lane) for when, items in matched if len(items) == 1], color)
             draw_candidates(findmy, [(when, lane) for when, items in matched if len(items) > 1], color, ambiguous=True)
         else:

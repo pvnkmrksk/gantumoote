@@ -11,7 +11,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlencode
 
 from .ble_day import day_plot_path
-from .ble_stream import resolve
+from .ble_stream import resolve, short_name
 from .flash import TAG
 from .settings import PROJECT
 
@@ -41,7 +41,7 @@ def selection(query, today):
 
 
 def page(day, tags, today):
-    tag_value = " ".join(tags)
+    tag_value = " ".join(short_name(tag) for tag in tags)
     query = urlencode({"date": day.isoformat(), "tags": tag_value})
     image = html.escape(f"{IMAGE}?{query}", quote=True)
     diagnostics = html.escape(f"{DIAGNOSTICS}?{query}", quote=True)
@@ -59,20 +59,35 @@ def page(day, tags, today):
   <label>Tags <input name="tags" type="text" maxlength="160" placeholder="All tags heard or reported" value="{tag_value}"></label>
   <button type="submit">Show plot</button>
 </form>
-<p>Times use the Pi’s clock. <span class="day-report-hint" hidden>Hover or tap a Find My guide to inspect nearby adverts.</span></p>
-<figure class="day-plot">
-  <div class="day-plot-frame" data-report-events="{events}">
-    <a href="{image}"><img src="{image}" alt="Daily BLE reception counts, exact packet gaps where available, RSSI, temperature, and Find My timestamps for {day}"></a>
-    <div class="day-plot-target" hidden aria-hidden="true">
-      <span class="day-report-cursor" hidden></span><span class="day-report-tooltip" hidden></span>
+<section class="day-chart" data-report-events="{events}" aria-label="Interactive day plot" hidden>
+  <div class="day-chart-toolbar">
+    <div class="day-chart-presets" role="group" aria-label="Time range">
+      <button type="button" data-chart="activity" aria-pressed="false">Activity</button>
+      <button type="button" data-chart="all" aria-pressed="false">Full day</button>
+    </div>
+    <div class="day-chart-actions" role="group" aria-label="Zoom and pan">
+      <button type="button" data-chart="earlier" aria-label="Earlier" title="Earlier">←</button>
+      <button type="button" data-chart="out" aria-label="Zoom out" title="Zoom out">−</button>
+      <button type="button" data-chart="in" aria-label="Zoom in" title="Zoom in">+</button>
+      <button type="button" data-chart="later" aria-label="Later" title="Later">→</button>
     </div>
   </div>
-  <figcaption><a href="{image}" download>Download PNG</a> · <a href="{matches}" download>Advert matches CSV</a></figcaption>
-</figure>
-<section class="day-report-inspector" aria-label="Inspect Find My reports" hidden>
-  <label>Find My report <select></select></label>
-  <div class="day-report-result" aria-live="polite"></div>
+  <p class="day-chart-range" aria-live="polite"></p>
+  <div class="day-chart-tags" role="group" aria-label="Visible tags"></div>
+  <div class="day-canvas-shell">
+    <canvas role="img" aria-label="BLE receptions, RSSI, temperature and Find My observations on a shared time axis"></canvas>
+    <div class="day-report-tooltip" aria-hidden="true" hidden></div>
+  </div>
+  <div class="day-report-inspector" hidden>
+    <label>Find My report <select></select></label>
+    <div class="day-report-result" aria-live="polite"></div>
+  </div>
 </section>
+<figure class="day-plot day-static-chart">
+  <a href="{image}"><img src="{image}" loading="lazy"
+    alt="Daily BLE reception counts, exact packet gaps where available, RSSI, temperature, and Find My timestamps for {day}"></a>
+</figure>
+<p class="day-downloads"><a href="{image}" download>Download PNG</a> · <a href="{matches}" download>Advert matches CSV</a></p>
 <details class="day-diagnostics">
   <summary>Diagnostics</summary>
   <p>Compare the Pi’s scan and recorder activity with Find My polling on the same timeline.

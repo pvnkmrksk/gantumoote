@@ -99,8 +99,8 @@ def draw_trace(ax, points, color):
         ax.scatter(times, values, s=14, color=color, alpha=.62, linewidths=0, zorder=3)
 
 
-def draw_smooth(ax, points, color):
-    """Draw a centered triangular moving average with gaps at long silences."""
+def smooth_segments(points):
+    """Compute a centered triangular moving average with gaps at long silences."""
     if len(points) < 3:
         return
     times, values = zip(*points)
@@ -118,7 +118,13 @@ def draw_smooth(ax, points, color):
             neighbors = range(max(start, i - SMOOTH_RADIUS), min(end, i + SMOOTH_RADIUS + 1))
             weights = [SMOOTH_RADIUS + 1 - abs(i - j) for j in neighbors]
             smoothed.append(sum(values[j] * weight for j, weight in zip(neighbors, weights)) / sum(weights))
-        ax.plot(times[start:end], smoothed, color=color, linewidth=1.8, zorder=4)
+        yield list(zip(times[start:end], smoothed))
+
+
+def draw_smooth(ax, points, color):
+    for segment in smooth_segments(points):
+        times, values = zip(*segment)
+        ax.plot(times, values, color=color, linewidth=1.8, zorder=4)
 
 
 def latest_recording(directory):

@@ -42,11 +42,14 @@ let map;try{map=new maplibregl.Map({container:'map',style:basemap(),center:initi
 map.on('error',e=>{if(!mapReady){$('mapError').hidden=false;$('mapError').textContent='Loading map… If it stays blank, check your connection.'}});
 map.on('style.load',()=>{applyPadding(false);mapReady=true;$('map').dataset.ready='true';$('mapError').hidden=true;cleanLabels();installLayers();drawMap();if(pendingCamera==='fit')fit();else if(pendingCamera==='pan'&&visible[selected])pan(visible[selected]);else if(!camera&&!params.has('c'))fit(false);pendingCamera=null;camera=[map.getCenter().lng,map.getCenter().lat]});
 map.on('moveend',save);
-// Full-bleed map: panels float over it. Tapping empty map slides them away (and back); the camera padding follows,
-// so fits, pans and follow always land in the part of the map you can see.
+// The controls can move over the map while the camera keeps its place.
 const immersive=()=>document.body.classList.contains('immersive');
 function chromePadding(){if(immersive())return {top:24,bottom:24,left:24,right:24};const wide=innerWidth>760,h=document.querySelector('header'),top=document.querySelector('.map-top'),tl=document.querySelector('.timeline-card'),side=$('sidebar');return {top:Math.max(h.offsetTop+h.offsetHeight,top.offsetTop+top.offsetHeight)+12,bottom:Math.max(0,innerHeight-tl.offsetTop)+12,left:wide?side.offsetLeft+side.offsetWidth+12:12,right:wide?60:52}}
-function applyPadding(animate){const p=chromePadding();document.documentElement.style.setProperty('--map-bottom',(immersive()?0:Math.max(0,p.bottom-6))+'px');if(animate)map.easeTo({padding:p,duration:450,easing:t=>1-Math.pow(1-t,3)});else map.setPadding(p)}
+function applyPadding(controlsOnly){
+    const padding=chromePadding();
+    document.documentElement.style.setProperty('--map-bottom',(immersive()?0:Math.max(0,padding.bottom-6))+'px');
+    if(!controlsOnly)map.setPadding(padding);
+}
 function setImmersive(on){if(on===immersive())return;document.body.classList.toggle('immersive',on);$('immersive').setAttribute('aria-pressed',String(on));applyPadding(true);if(on){try{if(!sessionStorage.getItem('gantu-map-only-hint')){toast('Tap the map, or press Esc, to bring the controls back');sessionStorage.setItem('gantu-map-only-hint','1')}}catch(_){}}}
 let tapTimer;map.on('click',e=>{if(map.getLayer('walk-dots')&&map.queryRenderedFeatures(e.point,{layers:['walk-dots']}).length)return;clearTimeout(tapTimer);tapTimer=setTimeout(()=>setImmersive(!immersive()),260)});map.on('dblclick',()=>clearTimeout(tapTimer));
 $('immersive').onclick=()=>setImmersive(true);document.addEventListener('keydown',e=>{if(e.key==='Escape'&&immersive())setImmersive(false)});map.on('dragstart',()=>{state.follow=false;syncFollow();save()});
