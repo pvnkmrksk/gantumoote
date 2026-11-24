@@ -75,8 +75,18 @@ def sign_in():
 
     account = apple_account()
     try:
-        email = input("Apple account email: ").strip()
-        password = getpass.getpass("Apple account password: ")
+        email = ""
+        while not email:
+            email = input("Apple account email: ").strip()
+        password = ""
+        for attempt in range(3):
+            # Nothing is echoed, not even dots, so an empty answer is usually a paste that didn't land.
+            password = getpass.getpass("Apple account password (nothing shows as you type or paste): ")
+            if password:
+                break
+            print("No password received. Type or paste it, then press Enter.")
+        if not password:
+            raise SystemExit("No password entered.")
         state = account.login(email, password)
         del password
         if state == LoginState.REQUIRE_2FA:
@@ -166,9 +176,27 @@ def main():
     except AppleLoginRequired:
         parser.exit(1, "Apple sign-in unavailable. Run the Apple setup and try signing in again.\n")
     except (Exception, SystemExit) as exc:
+        if type(exc).__name__ == "AppleServiceUnavailableError":
+            parser.exit(1, refusal_message(exc))
         parser.exit(
             1, f"Apple sign-in stopped ({type(exc).__name__}). Check the setup and trusted-device sign-in.\n"
         )
+
+
+def refusal_message(exc):
+    """Say which Apple step declined and how, from FindMy.py's AppleServiceUnavailableError (it holds no secrets)."""
+    status, what, wait = getattr(exc, "status_code", None), getattr(exc, "what", "A request"), getattr(exc, "retry_after", None)
+    kind = "rate limit" if status == 429 else "server refusal"
+    advice = (
+        f"Apple asked for {max(1, round(wait / 60))} min before retrying."
+        if wait
+        else "Wait a few hours before trying again; repeated attempts can extend it."
+    )
+    return (
+        f"Apple declined the sign-in: {what} got HTTP {status} ({kind}). This is Apple saying 'not now', not a fault "
+        f"in the setup. {advice} A brand-new Apple account may need to be signed in on an Apple device first, or a "
+        "day or so, before Apple accepts it elsewhere. The existing session keeps collecting meanwhile.\n"
+    )
 
 
 if __name__ == "__main__":
